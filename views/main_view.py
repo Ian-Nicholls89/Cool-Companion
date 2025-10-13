@@ -365,7 +365,7 @@ class MainView:
                         ElevatedButton(
                             "Scan",
                             on_click=lambda e: self.page.run_task(self._scan_barcode),
-                            bgcolor=UITheme.PRIMARY,
+                            bgcolor=UITheme.SECONDARY_VARIANT,
                             color=UITheme.TEXT_ON_PRIMARY,
                         ) if self.settings.enable_barcode_scanning else Container()
                     ]),
@@ -375,7 +375,7 @@ class MainView:
                         "Add Item",
                         on_click=lambda e: self._add_item(),
                         icon=Icons.ADD,
-                        bgcolor=UITheme.PRIMARY,
+                        bgcolor=UITheme.SUCCESS,
                         color=UITheme.TEXT_ON_PRIMARY,
                         expand=True,
                         ),
@@ -892,3 +892,4 @@ class MainView:
         self.page.dialog = dialog
         self.page.open(dialog)
         self.page.update()
+
