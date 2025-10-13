@@ -341,7 +341,16 @@ class MainView:
         self.add_sheet = BottomSheet(
             Container(
                 Column([
-                    Row([self.item_name_field]),
+                    Row([
+                        self.item_name_field,
+                        ElevatedButton(
+                            "Produce?",
+                            on_click=lambda e: self._show_produce_selector(),
+                            bgcolor=UITheme.SECONDARY,
+                            color=UITheme.TEXT_ON_PRIMARY,
+                            expand=False,
+                        )
+                    ]),
                     Row([
                         self.expiry_date_field,
                         IconButton(
@@ -363,21 +372,15 @@ class MainView:
                     Row([
                         self.quantity_field,
                         ElevatedButton(
-                            "Produce?",
-                            on_click=lambda e: self._show_produce_selector(),
-                            bgcolor=UITheme.SECONDARY,
-                            color=UITheme.TEXT_ON_PRIMARY,
-                            expand=True,
-                        )
-                    ]),
-                    ElevatedButton(
                         "Add Item",
                         on_click=lambda e: self._add_item(),
                         icon=Icons.ADD,
                         bgcolor=UITheme.PRIMARY,
                         color=UITheme.TEXT_ON_PRIMARY,
                         expand=True,
-                    ),
+                        ),
+                    ]),
+                    
                 ], spacing=UITheme.SPACING_MD),
                 padding=UITheme.SPACING_LG,
             ),
