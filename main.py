@@ -1,6 +1,7 @@
 """
 Fridge Inventory Application - Main Entry Point
 Refactored with proper architecture, security, and best practices.
+Optimized for Raspberry Pi 3 Model B with GL context validation.
 """
 import flet
 from flet import Page, Icons
@@ -24,6 +25,17 @@ logger.add(
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
     level="INFO"
 )
+
+# Perform system compatibility check before importing heavy dependencies
+from utils.system_check import check_and_report_system, SystemCompatibilityChecker
+
+logger.info("=" * 60)
+logger.info("Cool Companion - Fridge Inventory Application")
+logger.info("=" * 60)
+
+# Check system compatibility
+if not check_and_report_system():
+    logger.warning("System compatibility issues detected - attempting to continue with fallbacks")
 
 # Import configuration
 from config.settings import settings
@@ -54,6 +66,10 @@ class FridgeInventoryApp:
     def __init__(self):
         """Initialize application with all dependencies."""
         logger.info("Initializing Cool Companion...")
+        
+        # Check if running on Raspberry Pi and log system info
+        if SystemCompatibilityChecker.is_raspberry_pi():
+            logger.info("Detected Raspberry Pi - optimizations enabled")
         
         # Enumerate available cameras at startup
         logger.info("Enumerating available cameras...")
@@ -101,6 +117,13 @@ class FridgeInventoryApp:
             page: Flet page object
         """
         try:
+            # Check GL context before proceeding
+            gl_ok, gl_error = SystemCompatibilityChecker.check_gl_context()
+            if not gl_ok:
+                logger.error(f"GL Context Error: {gl_error}")
+                await self._show_gl_error_dialog(page, gl_error)
+                return
+            
             # Apply theme
             UITheme.apply_to_page(page)
             
@@ -176,6 +199,165 @@ class FridgeInventoryApp:
                 )
                 page.update()
     
+    async def _show_gl_error_dialog(self, page: Page, error_message: str):
+        """Show GL context error dialog with troubleshooting steps.
+        
+        Args:
+            page: Flet page object
+            error_message: The GL error message
+        """
+        page.title = "Cool Companion - System Error"
+        
+        # Get recommendations
+        recommendations = SystemCompatibilityChecker.get_optimization_recommendations()
+        
+        # Build recommendations text
+        rec_text = "\n".join([f"• {rec}" for rec in recommendations]) if recommendations else "No specific recommendations available."
+        
+        error_dialog = flet.Container(
+            content=flet.Column([
+                flet.Icon(Icons.ERROR_OUTLINE, size=80, color=flet.Colors.RED_700),
+                flet.Text(
+                    "Unable to Create GL Context",
+                    size=28,
+                    weight=flet.FontWeight.BOLD,
+                    color=flet.Colors.RED_700,
+                    text_align=flet.TextAlign.CENTER
+                ),
+                flet.Divider(height=20, color=flet.Colors.TRANSPARENT),
+                flet.Text(
+                    "The application cannot start because OpenGL context creation failed.",
+                    size=16,
+                    color=flet.Colors.GREY_800,
+                    text_align=flet.TextAlign.CENTER
+                ),
+                flet.Divider(height=10, color=flet.Colors.TRANSPARENT),
+                flet.Container(
+                    content=flet.Text(
+                        error_message,
+                        size=14,
+                        color=flet.Colors.RED_600,
+                        text_align=flet.TextAlign.CENTER,
+                        italic=True
+                    ),
+                    bgcolor=flet.Colors.RED_50,
+                    padding=15,
+                    border_radius=8
+                ),
+                flet.Divider(height=20, color=flet.Colors.TRANSPARENT),
+                flet.Text(
+                    "Troubleshooting Steps:",
+                    size=18,
+                    weight=flet.FontWeight.BOLD,
+                    color=flet.Colors.BLUE_700
+                ),
+                flet.Container(
+                    content=flet.Column([
+                        flet.Text(
+                            "1. Enable GL Driver (Raspberry Pi):",
+                            size=14,
+                            weight=flet.FontWeight.BOLD
+                        ),
+                        flet.Text(
+                            "   sudo raspi-config → Advanced Options → GL Driver → Enable",
+                            size=13,
+                            color=flet.Colors.GREY_700
+                        ),
+                        flet.Divider(height=10, color=flet.Colors.TRANSPARENT),
+                        flet.Text(
+                            "2. Install Required Libraries:",
+                            size=14,
+                            weight=flet.FontWeight.BOLD
+                        ),
+                        flet.Text(
+                            "   sudo apt-get update",
+                            size=13,
+                            color=flet.Colors.GREY_700
+                        ),
+                        flet.Text(
+                            "   sudo apt-get install libgles2-mesa libgles2-mesa-dev",
+                            size=13,
+                            color=flet.Colors.GREY_700
+                        ),
+                        flet.Divider(height=10, color=flet.Colors.TRANSPARENT),
+                        flet.Text(
+                            "3. Set Display Environment:",
+                            size=14,
+                            weight=flet.FontWeight.BOLD
+                        ),
+                        flet.Text(
+                            "   export DISPLAY=:0",
+                            size=13,
+                            color=flet.Colors.GREY_700
+                        ),
+                        flet.Divider(height=10, color=flet.Colors.TRANSPARENT),
+                        flet.Text(
+                            "4. Enable Software Rendering (Fallback):",
+                            size=14,
+                            weight=flet.FontWeight.BOLD
+                        ),
+                        flet.Text(
+                            "   export FLET_FORCE_SOFTWARE_RENDERING=1",
+                            size=13,
+                            color=flet.Colors.GREY_700
+                        ),
+                    ], spacing=5),
+                    bgcolor=flet.Colors.BLUE_50,
+                    padding=15,
+                    border_radius=8
+                ),
+                flet.Divider(height=20, color=flet.Colors.TRANSPARENT),
+                flet.Text(
+                    "Additional Recommendations:",
+                    size=16,
+                    weight=flet.FontWeight.BOLD,
+                    color=flet.Colors.GREEN_700
+                ),
+                flet.Container(
+                    content=flet.Text(
+                        rec_text,
+                        size=13,
+                        color=flet.Colors.GREY_700
+                    ),
+                    bgcolor=flet.Colors.GREEN_50,
+                    padding=15,
+                    border_radius=8
+                ),
+                flet.Divider(height=20, color=flet.Colors.TRANSPARENT),
+                flet.Row([
+                    flet.ElevatedButton(
+                        "Retry",
+                        icon=Icons.REFRESH,
+                        on_click=lambda _: asyncio.create_task(self._retry_startup(page))
+                    ),
+                    flet.OutlinedButton(
+                        "Exit",
+                        icon=Icons.EXIT_TO_APP,
+                        on_click=lambda _: page.window_close()
+                    )
+                ], alignment=flet.MainAxisAlignment.CENTER, spacing=10)
+            ],
+            horizontal_alignment=flet.CrossAxisAlignment.CENTER,
+            scroll=flet.ScrollMode.AUTO,
+            spacing=10),
+            padding=30,
+            alignment=flet.alignment.center,
+            expand=True
+        )
+        
+        page.add(error_dialog)
+        page.update()
+    
+    async def _retry_startup(self, page: Page):
+        """Retry application startup after user fixes GL issues.
+        
+        Args:
+            page: Flet page object
+        """
+        page.clean()
+        logger.info("Retrying application startup...")
+        await self.main(page)
+    
     async def _is_first_run(self) -> bool:
         """Check if this is the first run of the application.
         
@@ -225,10 +407,19 @@ def run_app():
         # Create application instance
         app = FridgeInventoryApp()
         
+        # Determine view mode based on environment and system
+        is_rpi = SystemCompatibilityChecker.is_raspberry_pi()
+        view_mode = flet.AppView.FLET_APP
+        
+        if settings.is_production():
+            view_mode = flet.AppView.WEB_BROWSER
+        elif is_rpi and os.environ.get('FLET_FORCE_SOFTWARE_RENDERING') == '1':
+            logger.info("Using software rendering mode for Raspberry Pi")
+        
         # Run Flet app
         flet.app(
             target=lambda page: asyncio.run(app.main(page)),
-            view=flet.AppView.FLET_APP if not settings.is_production() else flet.AppView.WEB_BROWSER,
+            view=view_mode,
             port=8550 if settings.is_production() else 0,
             host="0.0.0.0" if settings.is_production() else None
         )

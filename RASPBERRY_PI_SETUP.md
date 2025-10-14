@@ -101,8 +101,8 @@ sudo reboot
 ```bash
 cd ~
 # If using git:
-git clone <your-repository-url> cool-companion
-cd cool-companion/backend
+git clone https://github.com/Ian-Nicholls89/Cool-Companion.git cool-companion
+cd cool-companion
 
 # Or copy files to Raspberry Pi using scp, USB, etc.
 ```
@@ -117,8 +117,7 @@ source venv/bin/activate
 ### 3. Install Python Dependencies
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+pip install --upgrade pip && pip install -r requirements.txt
 ```
 
 **Note**: The `requirements.txt` is optimized for Raspberry Pi and will automatically install `opencv-python-headless` instead of the full OpenCV package.
@@ -227,9 +226,7 @@ sudo apt-get install --reinstall libgles2-mesa libgl1-mesa-glx
 ### Standard Run
 
 ```bash
-cd ~/cool-companion/backend
-source venv/bin/activate
-python main.py
+cd ~/cool-companion && chmod +x run.sh && ./run.sh
 ```
 
 ### Run with Logging
@@ -256,10 +253,10 @@ After=graphical.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/cool-companion/backend
+WorkingDirectory=/home/pi/cool-companion
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=/home/pi/.Xauthority"
-ExecStart=/home/pi/cool-companion/backend/venv/bin/python /home/pi/cool-companion/backend/main.py
+ExecStart=/home/pi/cool-companion/venv/bin/python /home/pi/cool-companion/main.py
 Restart=on-failure
 RestartSec=10
 
@@ -460,7 +457,7 @@ pip install -r requirements.txt --upgrade
 
 ```bash
 # Start application
-cd ~/cool-companion/backend && source venv/bin/activate && python main.py
+cd ~/cool-companion && ./run.sh
 
 # Check GL driver
 vcgencmd get_config int | grep dtoverlay
