@@ -1,5 +1,0 @@
-terminal_commands.sh
-.env
-fridge.db
-# Ignore the .gitignore file itself
-.gitignore
