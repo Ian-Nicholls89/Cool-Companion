@@ -10,7 +10,7 @@ echo "=================================="
 echo "  Starting Application"
 echo "=================================="
 
-echo "${YELLOW}it is recommended that this script is run on a Raspberry Pi OS full 32-bit installation for best compatibility.${NC}" 
+echo -e "${YELLOW}it is recommended that this script is run on a Raspberry Pi OS full 32-bit installation for best compatibility.${NC}" 
 
 # Check if main.py exists first
 if [ ! -f "main.py" ]; then
@@ -73,8 +73,9 @@ if [ ! -f "./venv/installed.marker" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     
     if [ -f "requirements.txt" ]; then
+        mkdir /home/temp
         pip install --upgrade pip --quiet
-        pip install -r requirements.txt
+        TMPDIR=/home/temp/ pip install --cache-dir=/home/temp/ -r requirements.txt
         
         if [ $? -ne 0 ]; then
             echo -e "${RED}ERROR: Failed to install dependencies${NC}"
@@ -83,6 +84,7 @@ if [ ! -f "./venv/installed.marker" ]; then
         
         # Create marker file so we don't reinstall every time
         touch ./venv/installed.marker
+        rmdir -r /home/temp
         echo -e "${GREEN}Dependencies installed successfully!${NC}"
     else
         echo -e "${YELLOW}WARNING: No requirements.txt found, skipping dependency installation${NC}"
