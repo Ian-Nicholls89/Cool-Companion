@@ -70,7 +70,7 @@ if [ ! -f "./venv/installed.marker" ]; then
     sed -i 's/ENABLE_SHOPPING_LIST=.*/ENABLE_SHOPPING_LIST=False/' .env
 
 
-    echo -e "${YELLOW}Installing dependencies...${NC}"
+    echo -e "${YELLOW}Installing dependencies. This will take a long time...${NC}"
     
     if [ -f "requirements.txt" ]; then
         mkdir /home/temp
