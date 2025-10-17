@@ -84,7 +84,7 @@ if [ ! -f "./venv/installed.marker" ]; then
         
         # Create marker file so we don't reinstall every time
         touch ./venv/installed.marker
-        rmdir -r /home/temp
+        rm -rf /home/temp
         echo -e "${GREEN}Dependencies installed successfully!${NC}"
     else
         echo -e "${YELLOW}WARNING: No requirements.txt found, skipping dependency installation${NC}"
