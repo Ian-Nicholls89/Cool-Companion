@@ -73,7 +73,7 @@ if [ ! -f "./venv/installed.marker" ]; then
     echo -e "${YELLOW}Installing dependencies. This will take a long time...${NC}"
     
     if [ -f "requirements.txt" ]; then
-        mkdir /home/temp
+        mkdir $HOME/CCinstall
         pip install --upgrade pip --quiet
         TMPDIR=/home/temp/ pip install --cache-dir=/home/temp/ -r requirements.txt
         
@@ -84,7 +84,7 @@ if [ ! -f "./venv/installed.marker" ]; then
         
         # Create marker file so we don't reinstall every time
         touch ./venv/installed.marker
-        rm -rf /home/temp
+        rm -rf $HOME/CCinstall
         echo -e "${GREEN}Dependencies installed successfully!${NC}"
     else
         echo -e "${YELLOW}WARNING: No requirements.txt found, skipping dependency installation${NC}"
