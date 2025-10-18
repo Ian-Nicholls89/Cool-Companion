@@ -75,7 +75,7 @@ if [ ! -f "./venv/installed.marker" ]; then
     if [ -f "requirements.txt" ]; then
         mkdir $HOME/CCinstall
         pip install --upgrade pip --quiet
-        TMPDIR=/home/temp/ pip install --cache-dir=/home/temp/ -r requirements.txt
+        TMPDIR=$HOME/CCinstall pip install --cache-dir=$HOME/CCinstall -r requirements.txt
         
         if [ $? -ne 0 ]; then
             echo -e "${RED}ERROR: Failed to install dependencies${NC}"
