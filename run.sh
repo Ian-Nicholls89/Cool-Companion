@@ -10,7 +10,7 @@ echo "=================================="
 echo "  Starting Application"
 echo "=================================="
 
-echo -e "${YELLOW}it is recommended that this script is run on a Raspberry Pi OS full 32-bit installation for best compatibility.${NC}" 
+echo -e "${YELLOW}it is recommended that this script is run on a Raspberry Pi OS 64-bit installation for best compatibility. It may work with 32-bit, YMMV.${NC}" 
 
 # Check if main.py exists first
 if [ ! -f "main.py" ]; then
