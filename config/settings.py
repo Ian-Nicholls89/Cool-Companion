@@ -59,7 +59,6 @@ class Settings:
     
     # Raspberry Pi Performance Settings
     enable_hardware_acceleration: bool = os.getenv('ENABLE_HARDWARE_ACCELERATION', 'true').lower() == 'true'
-    force_software_rendering: bool = os.getenv('FLET_FORCE_SOFTWARE_RENDERING', 'false').lower() == 'true'
     reduce_animations: bool = os.getenv('REDUCE_ANIMATIONS', str(_is_raspberry_pi()).lower()).lower() == 'true'
     
     # Development Settings
@@ -124,7 +123,6 @@ class Settings:
             'camera_fps': self.camera_fps,
             'fullscreen': self.window_fullscreen,
             'hardware_acceleration': self.enable_hardware_acceleration,
-            'software_rendering': self.force_software_rendering,
             'reduced_animations': self.reduce_animations
         }
 

@@ -145,7 +145,6 @@ WINDOW_FULLSCREEN=true
 
 # Performance Settings
 ENABLE_HARDWARE_ACCELERATION=true
-FLET_FORCE_SOFTWARE_RENDERING=false
 REDUCE_ANIMATIONS=true
 
 # Bring API (optional)
@@ -180,17 +179,17 @@ echo 'export DISPLAY=:0' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### Solution 3: Enable Software Rendering
+### Solution 3: Adjust OpenGL Settings
 
-If hardware acceleration fails, enable software rendering:
+If hardware acceleration fails, you can adjust Qt's OpenGL settings:
 
 ```bash
-export FLET_FORCE_SOFTWARE_RENDERING=1
+export QT_QUICK_BACKEND=software
 ```
 
-Or in your `.env` file:
+Or disable hardware acceleration in your `.env` file:
 ```
-FLET_FORCE_SOFTWARE_RENDERING=true
+ENABLE_HARDWARE_ACCELERATION=false
 ```
 
 ### Solution 4: Check X11 is Running
@@ -473,9 +472,6 @@ sudo journalctl -u cool-companion.service -f
 
 # Restart service
 sudo systemctl restart cool-companion.service
-
-# Enable software rendering
-export FLET_FORCE_SOFTWARE_RENDERING=1
 ```
 
 ## Performance Benchmarks

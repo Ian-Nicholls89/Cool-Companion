@@ -150,21 +150,20 @@ class SystemCompatibilityChecker:
     def get_optimization_recommendations() -> List[str]:
         """
         Get optimization recommendations for the current system.
-        
+
         Returns:
             List of recommendation strings
         """
         recommendations = []
-        
+
         if SystemCompatibilityChecker.is_raspberry_pi():
             recommendations.extend([
-                "Set FLET_FORCE_SOFTWARE_RENDERING=1 for better compatibility",
                 "Use lower camera resolution (320x240 or 640x480)",
                 "Enable GPU memory split: sudo raspi-config -> Performance -> GPU Memory -> 128MB+",
                 "Disable desktop effects for better performance",
                 "Consider using lite version of Raspberry Pi OS for headless operation"
             ])
-        
+
         return recommendations
     
     @staticmethod
@@ -172,21 +171,15 @@ class SystemCompatibilityChecker:
         """Apply Raspberry Pi specific optimizations to environment."""
         if not SystemCompatibilityChecker.is_raspberry_pi():
             return
-        
+
         logger.info("Applying Raspberry Pi optimizations...")
-        
-        # Force software rendering if GL context fails
-        gl_ok, _ = SystemCompatibilityChecker.check_gl_context()
-        if not gl_ok:
-            os.environ['FLET_FORCE_SOFTWARE_RENDERING'] = '1'
-            logger.info("Enabled software rendering mode")
-        
+
         # Set optimal threading for Raspberry Pi
         os.environ['OMP_NUM_THREADS'] = '2'
-        
+
         # Reduce OpenCV threading overhead
         os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
-        
+
         logger.info("Raspberry Pi optimizations applied")
 
 

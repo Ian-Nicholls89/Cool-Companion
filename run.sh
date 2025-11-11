@@ -132,26 +132,20 @@ elif [ "$XDG_SESSION_TYPE" = "tty" ]; then
                 export SDL_VIDEODRIVER=x11
                 export DISPLAY=:0
             else
-                echo -e "${RED}Failed to start X server. Falling back to software rendering.${NC}"
-                export FLET_FORCE_SOFTWARE_RENDERING=1
-                sed -i 's/FLET_FORCE_SOFTWARE_RENDERING=.*/FLET_FORCE_SOFTWARE_RENDERING=True/' .env
+                echo -e "${RED}Failed to start X server.${NC}"
             fi
         else
-            echo -e "${RED}X server not available. Falling back to software rendering.${NC}"
-            export FLET_FORCE_SOFTWARE_RENDERING=1
-            sed -i 's/FLET_FORCE_SOFTWARE_RENDERING=.*/FLET_FORCE_SOFTWARE_RENDERING=True/' .env
+            echo -e "${RED}X server not available.${NC}"
         fi
     fi
 else
     echo -e "${YELLOW}Unknown session type. Setting fallback options...${NC}"
-    export FLET_FORCE_SOFTWARE_RENDERING=1
     export SDL_VIDEODRIVER=x11
 fi
 
 # Try different GL configurations if the app fails
 (python3 main.py) || {
-    echo -e "${YELLOW}First attempt failed. Trying with software rendering...${NC}"
-    export FLET_FORCE_SOFTWARE_RENDERING=1
+    echo -e "${YELLOW}First attempt failed. Trying with minimal GL...${NC}"
     (python3 main.py) || {
         echo -e "${YELLOW}Second attempt failed. Trying with minimal GL...${NC}"
         export MESA_GL_VERSION_OVERRIDE=2.1

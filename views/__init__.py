@@ -1,4 +1,4 @@
 """Views module for presentation layer."""
-from .main_view import MainView
+from .main_window import MainWindow
 
-__all__ = ['MainView']
+__all__ = ['MainWindow']

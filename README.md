@@ -1,6 +1,6 @@
 # 🥗 Fridge Inventory Manager - Refactored Edition
 
-A modern, secure, and well-architected fridge inventory management application built with Flet (Flutter for Python).
+A modern, secure, and well-architected fridge inventory management application built with PySide6 (Qt for Python).
 
 ## ✨ Features
 
@@ -253,7 +253,7 @@ MIT License - See LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- Flet framework for Python-Flutter integration
+- PySide6 (Qt for Python) for cross-platform desktop UI
 - OpenFoodFacts for product data
 - Bring! for shopping list integration
 - The Python community for excellent libraries

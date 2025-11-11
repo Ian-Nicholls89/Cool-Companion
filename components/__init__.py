@@ -1,5 +1,5 @@
 """UI components module."""
-from .theme import UITheme
+from .theme_qt import UITheme
 
 __all__ = [
     'UITheme'
