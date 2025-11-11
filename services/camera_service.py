@@ -66,7 +66,7 @@ class CameraService:
     
     def __init__(self, camera_index: int = None, settings=None):
         """Initialize camera service.
-        
+
         Args:
             camera_index: Camera device index
             settings: Application settings
@@ -81,6 +81,8 @@ class CameraService:
         self._last_barcode = None
         self._last_barcode_time = 0
         self._debounce_time = 2.0  # Seconds to wait before scanning same barcode again
+        self._keep_alive_thread = None
+        self._keep_alive_running = False
     
     def start_camera(self) -> bool:
         """Initialize camera with error handling.
@@ -122,66 +124,133 @@ class CameraService:
                 logger.error(f"Camera initialization failed: {e}")
                 raise CameraError(f"Failed to initialize camera: {e}")
     
+    def start_keep_alive(self):
+        """Start keep-alive mode to keep camera warm without scanning.
+
+        This keeps the camera initialized and periodically reads frames to prevent
+        it from timing out or releasing, but doesn't perform barcode detection.
+        This eliminates initialization delay when scanning is requested.
+        """
+        if self._keep_alive_running:
+            logger.debug("Keep-alive already running, skipping start")
+            return
+
+        if not self.start_camera():
+            logger.warning("Failed to start camera for keep-alive")
+            return
+
+        self._keep_alive_running = True
+        logger.info("Starting camera keep-alive thread")
+
+        def keep_alive_loop():
+            logger.info("Camera keep-alive started")
+            while self._keep_alive_running:
+                try:
+                    if self.cap and self.cap.isOpened():
+                        # Read a frame to keep camera active
+                        ret, frame = self.cap.read()
+                        if not ret:
+                            logger.warning("Failed to read frame in keep-alive, reinitializing camera")
+                            with self._lock:
+                                if self.cap:
+                                    self.cap.release()
+                                    self.cap = None
+                            # Try to restart camera
+                            time.sleep(0.5)
+                            self.start_camera()
+                    time.sleep(1.0)  # Check every second
+                except Exception as e:
+                    logger.error(f"Error in keep-alive loop: {e}")
+                    time.sleep(1.0)
+
+            logger.info("Camera keep-alive stopped")
+
+        self._keep_alive_thread = threading.Thread(target=keep_alive_loop, daemon=True)
+        self._keep_alive_thread.start()
+
+    def stop_keep_alive(self):
+        """Stop keep-alive mode."""
+        if self._keep_alive_running:
+            self._keep_alive_running = False
+            if self._keep_alive_thread:
+                self._keep_alive_thread.join(timeout=2.0)
+            logger.info("Camera keep-alive stopped")
+
     def stop_camera(self):
         """Properly release camera resources."""
+        # Stop keep-alive first
+        self.stop_keep_alive()
+
         with self._lock:
             self.is_running = False
-            
+
             # Stop scan thread if running
             if self._scan_thread and self._scan_thread.is_alive():
                 self._scan_thread.join(timeout=1.0)
-            
+
             # Release camera
             if self.cap:
                 self.cap.release()
                 self.cap = None
                 logger.info("Camera stopped")
-    
+
     async def stop(self):
         """Async version of stop_camera."""
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self.stop_camera)
     
-    def scan_barcode_sync(self, timeout: int = None, frame_callback: Callable[[str, int], None] = None) -> Optional[str]:
+    def scan_barcode_sync(self, timeout: int = None, frame_callback: Callable[[str, int], None] = None, stop_flag: Callable[[], bool] = None) -> Optional[str]:
         """Synchronously scan for barcode with optional frame callback.
-        
+
         Args:
             timeout: Timeout in seconds
             frame_callback: Optional callback function(base64_frame, remaining_seconds) for live feed
-            
+            stop_flag: Optional callable that returns True when scanning should stop
+
         Returns:
             Barcode string or None if timeout
         """
         timeout = timeout or self.settings.scan_timeout
-        
-        if not self.start_camera():
-            raise CameraError("Failed to start camera")
-        
-        start_time = time.time()
-        
+
+        # Temporarily pause keep-alive if running
+        keep_alive_was_running = self._keep_alive_running
+        if keep_alive_was_running:
+            logger.info("Pausing camera keep-alive for barcode scanning")
+            self.stop_keep_alive()
+
         try:
+            if not self.start_camera():
+                raise CameraError("Failed to start camera")
+
+            start_time = time.time()
+
+            # Check both camera state and optional stop flag
             while self.is_running and (time.time() - start_time) < timeout:
+                # Allow external cancellation
+                if stop_flag and stop_flag():
+                    logger.info("Barcode scan cancelled by user")
+                    break
                 ret, frame = self.cap.read()
                 if not ret:
                     time.sleep(0.1)
                     continue
-                
+
                 # Calculate remaining time
                 remaining = int(timeout - (time.time() - start_time))
-                
+
                 # Add visual guide overlay
                 h, w = frame.shape[:2]
                 guide_color = (0, 255, 0)  # Green
                 margin = 50
-                
+
                 # Draw guide rectangle
                 cv2.rectangle(frame, (margin, margin), (w - margin, h - margin), guide_color, 2)
-                
+
                 # Add instruction text
                 text = "Align barcode within frame"
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 cv2.putText(frame, text, (margin, margin - 10), font, 0.7, guide_color, 2)
-                
+
                 # Send frame to callback if provided
                 if frame_callback:
                     try:
@@ -191,30 +260,44 @@ class CameraService:
                         frame_callback(frame_base64, remaining)
                     except Exception as e:
                         logger.error(f"Error in frame callback: {e}")
-                
+
                 # Decode barcodes
                 barcodes = pyzbar.decode(frame)
                 if barcodes:
                     barcode_data = barcodes[0].data.decode('utf-8')
-                    
+
                     # Check debounce
                     current_time = time.time()
                     if (barcode_data != self._last_barcode or
                         current_time - self._last_barcode_time > self._debounce_time):
-                        
+
                         self._last_barcode = barcode_data
                         self._last_barcode_time = current_time
-                        
+
                         logger.info(f"Barcode detected: {barcode_data}")
                         return barcode_data
-                
+
                 # Small delay to prevent CPU overload
                 time.sleep(0.1)  # ~10 FPS for UI updates
-            
+
             return None
-            
+
+        except Exception as e:
+            # On error, restart keep-alive if it was running
+            logger.error(f"Error during barcode scanning: {e}")
+            if keep_alive_was_running:
+                self.start_keep_alive()
+            raise
+
         finally:
-            self.stop_camera()
+            # Don't stop camera if keep-alive was running, just resume keep-alive
+            if keep_alive_was_running:
+                logger.info("Resuming camera keep-alive after scan")
+                self.start_keep_alive()
+            else:
+                # Only stop camera if keep-alive wasn't running
+                logger.info("Stopping camera (keep-alive was not running)")
+                self.stop_camera()
     
     async def scan_barcode(self, timeout: int = None) -> Optional[str]:
         """Asynchronously scan for barcode.
