@@ -1,12 +1,18 @@
 """Service for shopping list integration with Bring! API."""
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from python_bring_api.bring import Bring
 from python_bring_api.types import BringListItemDetails
 from config.settings import settings
 
+if TYPE_CHECKING:
+    from config.settings import Settings
+
 logger = logging.getLogger(__name__)
+
+# Shopping list service configuration constants
+SHOPPING_LIST_CACHE_DURATION = 300  # seconds - cache duration for shopping lists (5 minutes)
 
 class ShoppingListError(Exception):
     """Exception for shopping list operations."""
@@ -15,18 +21,22 @@ class ShoppingListError(Exception):
 class ShoppingListService:
     """Service for managing shopping list integration."""
     
-    def __init__(self, settings=None):
+    def __init__(self, settings: Optional['Settings'] = None):
         """Initialize shopping list service.
-        
+
         Args:
             settings: Application settings
         """
-        self.settings = settings or globals()['settings']
+        if settings is None:
+            from config.settings import settings as default_settings
+            self.settings = default_settings
+        else:
+            self.settings = settings
         self.bring_client = None
         self._authenticated = False
         self._lists_cache = None
         self._cache_time = None
-        self._cache_duration = 300  # 5 minutes cache
+        self._cache_duration = SHOPPING_LIST_CACHE_DURATION
     
     async def authenticate(self) -> bool:
         """Authenticate with Bring API.
@@ -50,11 +60,13 @@ class ShoppingListService:
                 self.settings.bring_email,
                 self.settings.bring_password
             )
-            
-            # Run login in executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.bring_client.login)
-            
+
+            # Run login in thread to avoid blocking (with timeout)
+            await asyncio.wait_for(
+                asyncio.to_thread(self.bring_client.login),
+                timeout=self.settings.api_timeout
+            )
+
             self._authenticated = True
             logger.info("Successfully authenticated with Bring")
             return True
@@ -125,14 +137,15 @@ class ShoppingListService:
             
             # Create item details
             item_details = BringListItemDetails(item_name, str(quantity))
-            
-            # Add item in executor
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: self.bring_client.saveItem(list_uuid, item_name, item_details)
+
+            # Add item in thread to avoid blocking (with timeout)
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.bring_client.saveItem, list_uuid, item_name, item_details
+                ),
+                timeout=self.settings.api_timeout
             )
-            
+
             logger.info(f"Added '{item_name}' (×{quantity}) to shopping list")
             return True
             
@@ -189,13 +202,13 @@ class ShoppingListService:
             if self._lists_cache and self._cache_time:
                 if current_time - self._cache_time < self._cache_duration:
                     return self._lists_cache
-            
-            # Load lists in executor
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, self.bring_client.loadLists
+
+            # Load lists in thread to avoid blocking (with timeout)
+            result = await asyncio.wait_for(
+                asyncio.to_thread(self.bring_client.loadLists),
+                timeout=self.settings.api_timeout
             )
-            
+
             lists = result.get('lists', [])
             
             # Update cache
@@ -227,14 +240,13 @@ class ShoppingListService:
                 if not lists:
                     return []
                 list_uuid = lists[0]['listUuid']
-            
-            # Get items in executor
-            loop = asyncio.get_event_loop()
-            items = await loop.run_in_executor(
-                None,
-                lambda: self.bring_client.getItems(list_uuid)
+
+            # Get items in thread to avoid blocking (with timeout)
+            items = await asyncio.wait_for(
+                asyncio.to_thread(self.bring_client.getItems, list_uuid),
+                timeout=self.settings.api_timeout
             )
-            
+
             return items.get('purchase', [])
             
         except Exception as e:
@@ -261,14 +273,13 @@ class ShoppingListService:
                 if not lists:
                     return False
                 list_uuid = lists[0]['listUuid']
-            
-            # Remove item in executor
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: self.bring_client.removeItem(list_uuid, item_name)
+
+            # Remove item in thread to avoid blocking (with timeout)
+            await asyncio.wait_for(
+                asyncio.to_thread(self.bring_client.removeItem, list_uuid, item_name),
+                timeout=self.settings.api_timeout
             )
-            
+
             logger.info(f"Removed '{item_name}' from shopping list")
             return True
             

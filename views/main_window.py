@@ -819,8 +819,16 @@ class MainWindow(QMainWindow):
             # Save settings to .env file
             try:
                 import os
+                from dotenv import set_key
+
                 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
 
+                # Ensure .env file exists
+                if not os.path.exists(env_path):
+                    with open(env_path, 'w') as f:
+                        f.write("# Cool Companion Configuration\n")
+
+                # Settings to save
                 settings_map = {
                     'BRING_EMAIL': bring_email.text(),
                     'BRING_PASSWORD': bring_password.text(),
@@ -829,33 +837,9 @@ class MainWindow(QMainWindow):
                     'ENABLE_SHOPPING_LIST': 'true' if shopping_check.isChecked() else 'false',
                 }
 
-                # Read and update .env file
-                env_lines = []
-                if os.path.exists(env_path):
-                    with open(env_path, 'r') as f:
-                        env_lines = f.readlines()
-
-                updated_keys = set()
-                new_lines = []
-
-                for line in env_lines:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        key = line.split('=')[0].strip()
-                        if key in settings_map:
-                            new_lines.append(f"{key}={settings_map[key]}\n")
-                            updated_keys.add(key)
-                        else:
-                            new_lines.append(line + '\n')
-                    else:
-                        new_lines.append(line + '\n')
-
+                # Use set_key for safe, atomic updates with proper escaping
                 for key, value in settings_map.items():
-                    if key not in updated_keys:
-                        new_lines.append(f"{key}={value}\n")
-
-                with open(env_path, 'w') as f:
-                    f.writelines(new_lines)
+                    set_key(env_path, key, value, quote_mode='never')
 
                 QMessageBox.information(
                     self, "Success",

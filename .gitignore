@@ -66,6 +66,7 @@ coverage.xml
 # Logs
 *.log
 logs/
+!logs/.gitkeep
 
 # OS Files
 Thumbs.db

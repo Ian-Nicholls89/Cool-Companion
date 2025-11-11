@@ -138,15 +138,53 @@ class Item:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Item':
-        """Create Item from dictionary"""
+        """Create Item from dictionary.
+
+        Args:
+            data: Dictionary with item data
+
+        Returns:
+            Item object
+
+        Raises:
+            ValueError: If required fields are missing or invalid
+        """
+        # Validate required fields
+        if 'name' not in data:
+            raise ValueError("Item name is required")
+        if 'expiry_date' not in data:
+            raise ValueError("Expiry date is required")
+
+        # Parse expiry date
+        try:
+            if isinstance(data['expiry_date'], str):
+                expiry_date = date.fromisoformat(data['expiry_date'])
+            elif isinstance(data['expiry_date'], date):
+                expiry_date = data['expiry_date']
+            else:
+                raise ValueError(f"Invalid expiry_date type: {type(data['expiry_date'])}")
+        except ValueError as e:
+            raise ValueError(f"Invalid expiry date format: {e}")
+
+        # Parse opened date if present
+        opened_date = None
+        if data.get('opened_date'):
+            try:
+                if isinstance(data['opened_date'], str):
+                    opened_date = date.fromisoformat(data['opened_date'])
+                elif isinstance(data['opened_date'], date):
+                    opened_date = data['opened_date']
+            except ValueError as e:
+                raise ValueError(f"Invalid opened date format: {e}")
+
         return cls(
             id=data.get('id'),
             name=data['name'],
-            expiry_date=date.fromisoformat(data['expiry_date']) if isinstance(data['expiry_date'], str) else data['expiry_date'],
+            expiry_date=expiry_date,
             barcode=data.get('barcode'),
             quantity=data.get('quantity', 1),
             is_opened=data.get('is_opened', False),
-            opened_date=date.fromisoformat(data['opened_date']) if data.get('opened_date') else None
+            opened_date=opened_date
         )
     
     def __str__(self) -> str:

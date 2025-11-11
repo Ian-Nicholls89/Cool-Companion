@@ -13,16 +13,28 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (override existing env vars)
+load_dotenv(override=True)
 
 # Configure logging
 from loguru import logger
 logger.remove()  # Remove default handler
+
+# Console logging (with colors)
 logger.add(
     sys.stderr,
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
     level="INFO"
+)
+
+# File logging (without colors, with rotation)
+logger.add(
+    "logs/cool-companion_{time:YYYY-MM-DD}.log",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+    level="DEBUG",  # More verbose for file logs
+    rotation="00:00",  # Rotate daily at midnight
+    retention="30 days",  # Keep logs for 30 days
+    compression="zip"  # Compress old logs
 )
 
 # Perform system compatibility check before importing heavy dependencies
@@ -66,6 +78,9 @@ if settings.statement:
     for line in settings.statement:
         logger.warning(line)
 
+# Application constants
+BACKGROUND_TASK_INTERVAL_MS = 86400000  # milliseconds - interval for background cleanup tasks (24 hours)
+
 class FridgeInventoryApp:
     """Main application class with dependency injection."""
 
@@ -89,9 +104,13 @@ class FridgeInventoryApp:
         self.available_cameras = enumerate_cameras()
         logger.info(f"Found {len(self.available_cameras)} camera(s): {self.available_cameras}")
 
-        # Validate settings
-        if not settings.validate():
-            logger.warning("Settings validation failed - some features may not work")
+        # Validate settings (after logger is initialized)
+        validation_errors = settings.get_validation_errors()
+        if validation_errors:
+            logger.warning("Settings validation failed:")
+            for error in validation_errors:
+                logger.warning(f"  - {error}")
+            logger.warning("Some features may not work correctly")
 
         # Initialize database
         logger.info("Initializing database...")
@@ -175,7 +194,7 @@ class FridgeInventoryApp:
             from PySide6.QtCore import QTimer
             self.background_timer = QTimer()
             self.background_timer.timeout.connect(self._background_tasks)
-            self.background_timer.start(86400000)  # 24 hours in milliseconds
+            self.background_timer.start(BACKGROUND_TASK_INTERVAL_MS)
 
         except Exception as e:
             logger.error(f"Error starting application: {e}")
@@ -212,17 +231,26 @@ class FridgeInventoryApp:
 
         # Stop background timer
         if hasattr(self, 'background_timer'):
-            self.background_timer.stop()
+            try:
+                self.background_timer.stop()
+            except Exception as e:
+                logger.debug(f"Error stopping background timer: {e}")
 
-        # Close database connections
-        db_pool.close_all()
-
-        # Stop camera service
+        # Stop camera service (stop keep-alive first, then camera)
         if hasattr(self, 'camera_service'):
             try:
+                logger.info("Stopping camera service...")
+                self.camera_service.stop_keep_alive()
                 self.camera_service.stop_camera()
+                logger.info("Camera service stopped")
             except Exception as e:
-                logger.debug(f"Error stopping camera service: {e}")
+                logger.error(f"Error stopping camera service: {e}")
+
+        # Close database connections
+        try:
+            db_pool.close_all()
+        except Exception as e:
+            logger.error(f"Error closing database connections: {e}")
 
         logger.info("Application cleanup complete")
 
@@ -233,9 +261,8 @@ def run_app():
     qt_app = None
 
     try:
-        # Enable high DPI scaling
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        # High DPI scaling is enabled by default in Qt6
+        # (Removed deprecated Qt.AA_EnableHighDpiScaling and Qt.AA_UseHighDpiPixmaps)
 
         # Create Qt application
         qt_app = QApplication(sys.argv)

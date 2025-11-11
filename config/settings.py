@@ -6,18 +6,29 @@ Includes Raspberry Pi specific optimizations.
 import os
 import platform
 from dataclasses import dataclass
-from typing import Optional
-from dotenv import load_dotenv, set_key
+from typing import Optional, List
+from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file (override existing env vars)
+load_dotenv(override=True)
+
+# Cache for Raspberry Pi detection (avoid repeated file reads)
+_IS_RPI_CACHE: Optional[bool] = None
 
 def _is_raspberry_pi() -> bool:
-    """Quick check if running on Raspberry Pi."""
+    """Quick check if running on Raspberry Pi (cached)."""
+    global _IS_RPI_CACHE
+
+    if _IS_RPI_CACHE is not None:
+        return _IS_RPI_CACHE
+
     try:
         with open('/proc/cpuinfo', 'r') as f:
-            return 'Raspberry Pi' in f.read() or 'BCM' in f.read()
+            cpuinfo = f.read()
+            _IS_RPI_CACHE = 'Raspberry Pi' in cpuinfo or 'BCM' in cpuinfo
+            return _IS_RPI_CACHE
     except:
+        _IS_RPI_CACHE = False
         return False
 
 @dataclass
@@ -33,7 +44,7 @@ class Settings:
     connection_pool_size: int = int(os.getenv('CONNECTION_POOL_SIZE', '5'))
     
     # Camera Configuration (with Raspberry Pi optimizations)
-    camera_index: int = int(os.getenv('CAMERA_INDEX', '0'))
+    camera_index: int = int(os.getenv('CAMERA_INDEX', '0') or '0')
     # Lower default resolution for Raspberry Pi
     _default_width = '320' if _is_raspberry_pi() else '640'
     _default_height = '240' if _is_raspberry_pi() else '480'
@@ -76,30 +87,63 @@ class Settings:
 
     statement = None
 
+    # Check for default credentials and disable shopping list if found
     if bring_password == 'your_secure_password' and bring_email == 'your_email@example.com' and enable_shopping_list:
-        statement = ["Warning: Shopping List enabled with default Bring credentials detected. Turning off shopping list.", "Re-enable the shopping list and enter non-default credentials in the settings menu."]
-        set_key('.env', 'ENABLE_SHOPPING_LIST', "false", quote_mode='never')
+        statement = [
+            "Warning: Default Bring! credentials detected. Shopping list has been disabled.",
+            "Please update BRING_EMAIL and BRING_PASSWORD in your .env file or via Settings menu.",
+            "Re-enable shopping list after updating credentials."
+        ]
+        # Disable in-memory only - don't modify .env file
         enable_shopping_list = False
     
-    def validate(self) -> bool:
-        """Validate settings"""
+    def validate(self, log_errors: bool = True) -> bool:
+        """Validate settings.
+
+        Args:
+            log_errors: If True, errors are printed to stdout (for backwards compatibility)
+
+        Returns:
+            True if validation passed, False otherwise
+        """
         errors = []
-        
+
         if self.enable_shopping_list and not (self.bring_email and self.bring_password):
             errors.append("Bring credentials required when shopping list is enabled")
-        
+
         if self.connection_pool_size < 1:
             errors.append("Connection pool size must be at least 1")
-        
+
         if self.api_timeout < 1:
             errors.append("API timeout must be at least 1 second")
-        
-        if errors:
+
+        if errors and log_errors:
             for error in errors:
                 print(f"Configuration Error: {error}")
-            return False
-        
-        return True
+
+        return len(errors) == 0
+
+    def get_validation_errors(self) -> List[str]:
+        """Get list of validation errors without logging.
+
+        Returns:
+            List of validation error messages
+        """
+        errors = []
+
+        if self.enable_shopping_list and not (self.bring_email and self.bring_password):
+            errors.append("Bring credentials required when shopping list is enabled")
+
+        if self.connection_pool_size < 1:
+            errors.append("Connection pool size must be at least 1")
+
+        if self.api_timeout < 1:
+            errors.append("API timeout must be at least 1 second")
+
+        if self.camera_index < 0 or self.camera_index > 10:
+            errors.append(f"Camera index must be between 0 and 10 (got {self.camera_index})")
+
+        return errors
     
     def is_production(self) -> bool:
         """Check if running in production mode"""
@@ -129,6 +173,5 @@ class Settings:
 # Create global settings instance
 settings = Settings()
 
-# Validate settings on import
-if not settings.validate():
-    print("Warning: Configuration validation failed. Some features may not work correctly.")
+# Note: Settings validation is now performed in main.py after logger initialization
+# This prevents race conditions and ensures proper error reporting

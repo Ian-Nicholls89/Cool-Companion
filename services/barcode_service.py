@@ -1,13 +1,15 @@
 """Service for barcode operations with fallback strategy."""
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from abc import ABC, abstractmethod
 from functools import lru_cache
 import requests
-from concurrent.futures import ThreadPoolExecutor
 from repositories.barcode_repository import BarcodeRepository
 from config.settings import settings
+
+if TYPE_CHECKING:
+    from config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +60,13 @@ class OpenFoodFactsLookup(BarcodeLookupStrategy):
     async def lookup(self, barcode: str) -> Optional[Dict[str, Any]]:
         """Lookup in OpenFoodFacts API with caching."""
         try:
-            # Run in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor() as executor:
-                response = await loop.run_in_executor(
-                    executor,
-                    lambda: requests.get(
-                        f"{self.api_url}{barcode}.json",
-                        timeout=self.timeout,
-                        verify=self.verify_ssl
-                    )
-                )
+            # Run in thread to avoid blocking
+            response = await asyncio.to_thread(
+                requests.get,
+                f"{self.api_url}{barcode}.json",
+                timeout=self.timeout,
+                verify=self.verify_ssl
+            )
             
             if response.status_code == 200:
                 data = response.json()
@@ -92,15 +90,19 @@ class OpenFoodFactsLookup(BarcodeLookupStrategy):
 class BarcodeService:
     """Service for barcode operations with fallback strategy."""
     
-    def __init__(self, barcode_repository: BarcodeRepository, settings=None):
+    def __init__(self, barcode_repository: BarcodeRepository, settings: Optional['Settings'] = None):
         """Initialize barcode service.
-        
+
         Args:
             barcode_repository: Repository for barcode operations
             settings: Application settings
         """
         self.repository = barcode_repository
-        self.settings = settings or globals()['settings']
+        if settings is None:
+            from config.settings import settings as default_settings
+            self.settings = default_settings
+        else:
+            self.settings = settings
         
         # Initialize lookup strategies
         self.strategies = [

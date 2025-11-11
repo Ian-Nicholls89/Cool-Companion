@@ -4,15 +4,23 @@ from contextlib import contextmanager
 from queue import Queue
 import threading
 import os
+import atexit
+import logging
 from typing import Generator
 from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+# Database configuration constants
+DB_CONNECTION_TIMEOUT = 30.0  # seconds - timeout for database connection
+DB_BUSY_TIMEOUT = 30000  # milliseconds - timeout when database is locked
 
 class DatabasePool:
     """Connection pool for SQLite database with thread safety."""
     
     def __init__(self, database_path: str = None, pool_size: int = None):
         """Initialize database connection pool.
-        
+
         Args:
             database_path: Path to SQLite database file
             pool_size: Number of connections in pool
@@ -21,50 +29,100 @@ class DatabasePool:
         self.pool_size = pool_size or settings.connection_pool_size
         self._connections: Queue = Queue(maxsize=self.pool_size)
         self._lock = threading.Lock()
+        self._closed = False
         self._initialize_pool()
+
+        # Register cleanup at exit
+        atexit.register(self.close_all)
     
+    def _create_connection(self) -> sqlite3.Connection:
+        """Create a new database connection with proper configuration.
+
+        Returns:
+            Configured SQLite connection
+        """
+        conn = sqlite3.connect(
+            self.database_path,
+            check_same_thread=False,
+            timeout=DB_CONNECTION_TIMEOUT
+        )
+        # Enable foreign keys
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Enable WAL mode for better concurrency
+        conn.execute("PRAGMA journal_mode = WAL")
+        # Set busy timeout
+        conn.execute(f"PRAGMA busy_timeout = {DB_BUSY_TIMEOUT}")
+        # Set row factory for dict-like access
+        conn.row_factory = sqlite3.Row
+        return conn
+
     def _initialize_pool(self):
         """Initialize connection pool with configured connections."""
         # Ensure database directory exists
         db_dir = os.path.dirname(self.database_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
-        
+
         # Create connections
         for _ in range(self.pool_size):
-            conn = sqlite3.connect(
-                self.database_path,
-                check_same_thread=False,
-                timeout=30.0  # Increased timeout for better concurrency
-            )
-            # Enable foreign keys
-            conn.execute("PRAGMA foreign_keys = ON")
-            # Enable WAL mode for better concurrency
-            conn.execute("PRAGMA journal_mode = WAL")
-            # Set busy timeout
-            conn.execute("PRAGMA busy_timeout = 30000")
-            # Set row factory for dict-like access
-            conn.row_factory = sqlite3.Row
-            # Add to pool
+            conn = self._create_connection()
             self._connections.put(conn)
     
     @contextmanager
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get connection from pool with context manager.
-        
+
         Yields:
             sqlite3.Connection: Database connection
         """
+        if self._closed:
+            raise RuntimeError("Database pool is closed")
+
         conn = self._connections.get(block=True)
+        connection_valid = True
+
         try:
             yield conn
+        except sqlite3.Error as e:
+            # Rollback on database error
+            try:
+                conn.rollback()
+            except:
+                pass
+
+            # Test if connection is still valid
+            try:
+                conn.execute("SELECT 1")
+            except:
+                connection_valid = False
+                logger.error("Database connection corrupted after error, creating new connection")
+
+            raise e
         except Exception as e:
-            # Rollback on error
-            conn.rollback()
+            # Rollback on any error
+            try:
+                conn.rollback()
+            except:
+                pass
             raise e
         finally:
-            # Return connection to pool
-            self._connections.put(conn)
+            # Only return connection to pool if it's still valid
+            if connection_valid and not self._closed:
+                self._connections.put(conn)
+            else:
+                # Connection is corrupted, close it and create a new one
+                try:
+                    conn.close()
+                except:
+                    pass
+
+                if not self._closed:
+                    # Create new connection to replace the corrupted one
+                    try:
+                        new_conn = self._create_connection()
+                        self._connections.put(new_conn)
+                    except Exception as e:
+                        logger.error(f"Failed to create replacement connection: {e}")
     
     def execute_script(self, script: str):
         """Execute SQL script (for migrations/setup).
@@ -79,13 +137,22 @@ class DatabasePool:
     def close_all(self):
         """Close all connections in pool."""
         with self._lock:
+            if self._closed:
+                return
+
+            self._closed = True
+            closed_count = 0
+
             while not self._connections.empty():
-                conn = self._connections.get()
-                conn.close()
-    
-    def __del__(self):
-        """Cleanup connections on deletion."""
-        self.close_all()
+                try:
+                    conn = self._connections.get_nowait()
+                    conn.close()
+                    closed_count += 1
+                except Exception as e:
+                    logger.error(f"Error closing connection: {e}")
+
+            if closed_count > 0:
+                logger.info(f"Closed {closed_count} database connections")
 
 # Create global database pool instance
 db_pool = DatabasePool()

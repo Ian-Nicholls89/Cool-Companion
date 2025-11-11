@@ -163,59 +163,52 @@ class BarcodeValidator:
     
     @staticmethod
     def validate_barcode(barcode: str) -> ValidationResult:
-        """Validate barcode format.
-        
+        """Validate barcode format using strict whitelist approach.
+
         Args:
             barcode: Barcode to validate
-            
+
         Returns:
             ValidationResult
         """
         if not barcode:
             return ValidationResult.error("Barcode cannot be empty")
-        
+
         barcode = barcode.strip()
-        
+
+        if len(barcode) < 1:
+            return ValidationResult.error("Barcode cannot be empty")
+
         if len(barcode) > 50:
             return ValidationResult.error("Barcode too long (max 50 characters)")
-        
-        # Check for SQL injection attempts
-        if any(char in barcode for char in [';', '--', '/*', '*/', 'DROP', 'DELETE']):
-            return ValidationResult.error("Barcode contains invalid characters")
-        
-        # Allow produce codes
-        if barcode.startswith('PRODUCE_'):
-            return ValidationResult.success()
-        
-        # Check common barcode formats
-        if (BarcodeValidator.EAN13_PATTERN.match(barcode) or
-            BarcodeValidator.EAN8_PATTERN.match(barcode) or
-            BarcodeValidator.UPC_PATTERN.match(barcode) or
-            BarcodeValidator.CODE128_PATTERN.match(barcode)):
-            return ValidationResult.success()
-        
-        # Generic validation for other formats
-        if re.match(r'^[A-Za-z0-9\-]+$', barcode):
-            return ValidationResult.success()
-        
-        return ValidationResult.error("Invalid barcode format")
+
+        # Whitelist approach: Only allow alphanumeric, hyphen, and underscore
+        # This covers all standard barcode formats:
+        # - EAN-13: digits only
+        # - UPC: digits only
+        # - Code128: alphanumeric + hyphen
+        # - Produce codes: PRODUCE_NAME format
+        if not re.match(r'^[A-Za-z0-9\-_]+$', barcode):
+            return ValidationResult.error("Barcode can only contain letters, numbers, hyphens, and underscores")
+
+        return ValidationResult.success()
     
     @staticmethod
     def sanitize_barcode(barcode: str) -> str:
-        """Sanitize barcode for safe storage.
-        
+        """Sanitize barcode for safe storage using whitelist.
+
         Args:
             barcode: Barcode to sanitize
-            
+
         Returns:
-            Sanitized barcode
+            Sanitized barcode (only alphanumeric, hyphen, underscore)
         """
         if not barcode:
             return ""
-        
-        # Remove any potentially harmful characters
-        sanitized = re.sub(r'[^\w\-]', '', barcode.strip())
-        
+
+        # Only keep alphanumeric, hyphen, and underscore characters
+        sanitized = re.sub(r'[^A-Za-z0-9\-_]', '', barcode.strip())
+
         # Truncate if too long
         return sanitized[:50]
     
