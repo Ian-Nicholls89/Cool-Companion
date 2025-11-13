@@ -39,6 +39,13 @@ def enumerate_cameras(max_cameras: int = 3) -> list:
             # Use V4L2 backend on Linux for better Raspberry Pi compatibility
             try:
                 cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+                if cap and cap.isOpened():
+                    # Apply same timeout settings as in _open_camera
+                    try:
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        cap.set(cv2.CAP_PROP_TIMEOUT, 3000)
+                    except Exception as e:
+                        logger.debug(f"Could not set V4L2 properties during enumeration: {e}")
             except Exception as e:
                 logger.debug(f"V4L2 backend not available for camera {index}: {e}, using default backend")
                 cap = cv2.VideoCapture(index)
@@ -117,7 +124,30 @@ class CameraService:
             try:
                 cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
                 if cap.isOpened():
+                    # Configure V4L2-specific settings for Raspberry Pi
+                    try:
+                        # Set buffer size to 1 to reduce latency and avoid stale frames
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                        # Set timeout to prevent long waits (in milliseconds)
+                        # This helps prevent the "select() timeout" errors
+                        cap.set(cv2.CAP_PROP_TIMEOUT, 3000)  # 3 second timeout
+
+                        # Disable autofocus if available (faster frame acquisition)
+                        cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+
+                        # Set FOURCC codec to MJPEG for better performance on Raspberry Pi
+                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                    except Exception as e:
+                        logger.debug(f"Could not set V4L2 properties: {e}")
+
                     logger.debug(f"Opened camera {index} with V4L2 backend")
+
+                    # Warm up the camera by discarding first few frames
+                    # First frames are often black or corrupted
+                    for i in range(5):
+                        cap.grab()  # grab() is faster than read()
+
                     return cap
             except Exception as e:
                 logger.debug(f"V4L2 backend not available for camera {index}: {e}")
@@ -125,7 +155,18 @@ class CameraService:
             # Fallback to default backend
             cap = cv2.VideoCapture(index)
             if cap.isOpened():
+                # Set buffer size for default backend too
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception as e:
+                    logger.debug(f"Could not set buffer size on default backend: {e}")
+
                 logger.debug(f"Opened camera {index} with default backend")
+
+                # Warm up camera
+                for i in range(5):
+                    cap.grab()
+
                 return cap
 
             return None
@@ -174,10 +215,19 @@ class CameraService:
                         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.settings.camera_height)
                         self.cap.set(cv2.CAP_PROP_FPS, self.settings.camera_fps)
 
-                        # Set buffer size to 1 to reduce latency
+                        # Buffer size is already set in _open_camera, but reinforce it
                         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception as e:
                         logger.warning(f"Could not set camera properties: {e}")
+
+                    # Additional warm-up: read and discard a few frames to ensure camera is stable
+                    # This is especially important on Raspberry Pi
+                    logger.debug("Warming up camera...")
+                    for i in range(3):
+                        try:
+                            self.cap.grab()
+                        except Exception as e:
+                            logger.debug(f"Error during warm-up grab {i}: {e}")
 
                     self.is_running = True
                     logger.info(f"Camera {self.camera_index} started successfully")
@@ -216,6 +266,7 @@ class CameraService:
 
         def keep_alive_loop():
             logger.info("Camera keep-alive started")
+            consecutive_failures = 0
             while self._keep_alive_running:
                 try:
                     # Wait if scan is in progress
@@ -225,22 +276,56 @@ class CameraService:
 
                     with self._lock:
                         if self.cap and self.cap.isOpened():
-                            # Read a frame to keep camera active
-                            ret, frame = self.cap.read()
-                            if not ret:
-                                logger.warning("Failed to read frame in keep-alive, will retry")
+                            # Use grab() instead of read() for better performance
+                            # grab() only decodes the frame header, not the full image
+                            # This keeps the camera active without unnecessary processing
+                            ret = self.cap.grab()
+                            if ret:
+                                # Periodically do a full read to flush buffer
+                                # This prevents buffer buildup and stale frames
+                                if consecutive_failures > 0 or time.time() % 10 < 1:
+                                    ret, frame = self.cap.retrieve()
+                                    if ret:
+                                        consecutive_failures = 0
+                                    else:
+                                        consecutive_failures += 1
+                                        logger.warning(f"Failed to retrieve frame in keep-alive (attempt {consecutive_failures})")
+                                else:
+                                    consecutive_failures = 0
+                            else:
+                                consecutive_failures += 1
+                                logger.warning(f"Failed to grab frame in keep-alive (attempt {consecutive_failures})")
+
+                            # If we have too many failures, restart the camera
+                            if consecutive_failures >= 5:
+                                logger.error("Too many consecutive failures, restarting camera")
+                                try:
+                                    if self.cap:
+                                        self.cap.release()
+                                        self.cap = None
+                                    time.sleep(0.5)
+                                    self.start_camera()
+                                    consecutive_failures = 0
+                                except Exception as e:
+                                    logger.error(f"Failed to restart camera: {e}")
+                                    consecutive_failures = 0
+                                    time.sleep(2.0)  # Wait longer before retrying
                         else:
                             # Camera closed, try to restart
                             logger.warning("Camera closed in keep-alive, attempting restart")
                             time.sleep(0.5)
                             try:
                                 self.start_camera()
+                                consecutive_failures = 0
                             except Exception as e:
                                 logger.error(f"Failed to restart camera in keep-alive: {e}")
+                                time.sleep(2.0)
 
-                    time.sleep(1.0)  # Check every second
+                    # Sleep between reads - reduced from 1.0s to 0.5s for more frequent checks
+                    time.sleep(0.5)
                 except Exception as e:
                     logger.error(f"Error in keep-alive loop: {e}")
+                    consecutive_failures += 1
                     time.sleep(1.0)
 
             logger.info("Camera keep-alive stopped")
