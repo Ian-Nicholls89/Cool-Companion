@@ -79,6 +79,8 @@ if [ ! -f ".env" ]; then
     else
         echo -e "${RED}WARNING: No .env.example found. Please create .env manually.${NC}"
     fi
+else
+    echo -e "${GREEN}✓ .env file already exists${NC}"
 fi
 
 # Check if dependencies need to be installed
@@ -89,11 +91,12 @@ if [ ! -f "$MARKER_FILE" ]; then
 
     if [ -f "requirements.txt" ]; then
         echo -e "${BLUE}Installing Python dependencies globally...${NC}"
+        echo -e "${YELLOW}This may take some time.${NC}"
 
         # Try to install system-wide (requires sudo on some systems)
-        if python3 -m pip install --upgrade pip --quiet 2>/dev/null; then
+        if python3 -m pip install --upgrade pip --quiet --break-system-packages 2>/dev/null; then
             # Pip upgrade succeeded, now install requirements
-            if python3 -m pip install -r requirements.txt --quiet; then
+            if python3 -m pip install -r requirements.txt --quiet --break-system-packages; then
                 echo -e "${GREEN}✓ Dependencies installed successfully (system-wide)${NC}"
                 touch "$MARKER_FILE"
             else
@@ -121,9 +124,7 @@ if [ ! -f "$MARKER_FILE" ]; then
             fi
         else
             echo -e "${YELLOW}Cannot upgrade pip, trying installation anyway...${NC}"
-            python3 -m pip install -r requirements.txt --quiet || \
-            python3 -m pip install --user -r requirements.txt --quiet || \
-            sudo python3 -m pip install -r requirements.txt --break-system-packages
+            python3 -m pip install -r requirements.txt --break-system-packages --quiet
 
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}✓ Dependencies installed${NC}"
