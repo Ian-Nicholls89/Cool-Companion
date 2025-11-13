@@ -180,6 +180,7 @@ class UpdateService:
         if not self.is_git_repo:
             return (False, "Not a git repository")
 
+        stashed = False
         try:
             logger.info("Applying git delta update...")
 
@@ -193,14 +194,28 @@ class UpdateService:
                 timeout=5
             )
 
+            # If there are uncommitted changes, stash them automatically
             if status_result.stdout.strip():
-                # There are uncommitted changes
-                logger.warning("Uncommitted changes detected")
-                return (
-                    False,
-                    "You have uncommitted local changes.\n"
-                    "Please commit or stash them before updating."
+                logger.info("Uncommitted changes detected, stashing them...")
+                stash_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "stash", "push", "-u", "-m", "Auto-stash before update"],
+                    cwd=self.app_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
                 )
+
+                if stash_result.returncode != 0:
+                    logger.error(f"Failed to stash changes: {stash_result.stderr}")
+                    return (
+                        False,
+                        "Failed to stash uncommitted changes.\n"
+                        f"Error: {stash_result.stderr.strip()}"
+                    )
+
+                stashed = True
+                logger.info("Changes stashed successfully")
 
             # Get info before update
             files_to_update = await self._get_changed_files()
@@ -220,7 +235,31 @@ class UpdateService:
             if pull_result.returncode != 0:
                 error_msg = pull_result.stderr.strip()
                 logger.error(f"Git pull failed: {error_msg}")
+
+                # If we stashed, try to restore the stash
+                if stashed:
+                    await self._restore_stash()
+
                 return (False, f"Update failed: {error_msg}")
+
+            # If we stashed changes, restore them now
+            if stashed:
+                logger.info("Restoring stashed changes...")
+                pop_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["git", "stash", "pop"],
+                    cwd=self.app_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
+                if pop_result.returncode != 0:
+                    logger.warning(f"Could not restore stashed changes: {pop_result.stderr}")
+                    # Don't fail the update, but warn the user
+                    logger.info("Stashed changes are still available via 'git stash list'")
+                else:
+                    logger.info("Stashed changes restored successfully")
 
             # Record successful update
             self._save_last_update_info(commits_to_apply, len(files_to_update))
@@ -237,6 +276,11 @@ class UpdateService:
 
         except Exception as e:
             logger.error(f"Error applying update: {e}")
+
+            # If we stashed, try to restore the stash
+            if stashed:
+                await self._restore_stash()
+
             return (False, f"Update error: {str(e)}")
 
     async def get_update_statistics(self) -> Dict[str, Any]:
@@ -261,6 +305,27 @@ class UpdateService:
         return stats
 
     # Private helper methods
+
+    async def _restore_stash(self) -> None:
+        """Attempt to restore stashed changes after an error."""
+        try:
+            logger.info("Attempting to restore stashed changes...")
+            pop_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "stash", "pop"],
+                cwd=self.app_dir,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if pop_result.returncode != 0:
+                logger.warning(f"Could not restore stashed changes: {pop_result.stderr}")
+                logger.info("Stashed changes are still available via 'git stash list'")
+            else:
+                logger.info("Stashed changes restored successfully")
+        except Exception as e:
+            logger.error(f"Error restoring stash: {e}")
 
     async def _has_git_command(self) -> bool:
         """Check if git command is available."""
