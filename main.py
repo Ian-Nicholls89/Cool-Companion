@@ -9,6 +9,7 @@ import logging
 from dotenv import load_dotenv
 import sys
 import os
+import argparse
 
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,18 +17,28 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Load environment variables (override existing env vars)
 load_dotenv(override=True)
 
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="Cool Companion - Fridge Inventory Application")
+parser.add_argument(
+    "--quiet", "-q",
+    action="store_true",
+    help="Run in quiet mode (suppress console output, logs still written to file)"
+)
+args = parser.parse_args()
+
 # Configure logging
 from loguru import logger
 logger.remove()  # Remove default handler
 
-# Console logging (with colors)
-logger.add(
-    sys.stderr,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    level="INFO"
-)
+# Console logging (with colors) - only if not in quiet mode
+if not args.quiet:
+    logger.add(
+        sys.stderr,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        level="INFO"
+    )
 
-# File logging (without colors, with rotation)
+# File logging (without colors, with rotation) - always enabled
 logger.add(
     "logs/cool-companion_{time:YYYY-MM-DD}.log",
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
