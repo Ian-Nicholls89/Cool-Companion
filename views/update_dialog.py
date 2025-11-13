@@ -22,7 +22,7 @@ class UpdateApplyWorker(QThread):
         self.update_service = update_service
 
     def run(self):
-        """Apply git update in background thread."""
+        """Apply git delta update in background thread."""
         try:
             import asyncio
 
@@ -31,14 +31,8 @@ class UpdateApplyWorker(QThread):
             asyncio.set_event_loop(loop)
 
             try:
-                success = loop.run_until_complete(
-                    self.update_service.apply_git_update()
-                )
-
-                if success:
-                    self.finished.emit(True, "Update applied successfully! Please restart the application.")
-                else:
-                    self.finished.emit(False, "Update failed. Please check logs for details.")
+                success, message = loop.run_until_complete(self.update_service.apply_update())
+                self.finished.emit(success, message)
             finally:
                 loop.close()
 
@@ -76,40 +70,60 @@ class UpdateDialog(QDialog):
         layout.setSpacing(16)
 
         # Title
-        title = QLabel("🎉 A new version is available!")
+        self.title_label = QLabel("🎉 A new version is available!")
         title_font = QFont()
         title_font.setPointSize(14)
         title_font.setBold(True)
-        title.setFont(title_font)
-        layout.addWidget(title)
+        self.title_label.setFont(title_font)
+        layout.addWidget(self.title_label)
 
-        # Version information
-        version_layout = QHBoxLayout()
+        # Commit information
+        commit_layout = QHBoxLayout()
 
-        current_label = QLabel(f"Current version: <b>{self.update_info.current_version}</b>")
-        version_layout.addWidget(current_label)
+        current_label = QLabel(f"Current: <b>{self.update_info.current_commit}</b>")
+        commit_layout.addWidget(current_label)
 
-        version_layout.addStretch()
+        commit_layout.addStretch()
 
-        latest_label = QLabel(f"Latest version: <b>{self.update_info.latest_version}</b>")
-        version_layout.addWidget(latest_label)
+        latest_label = QLabel(f"Latest: <b>{self.update_info.latest_commit}</b>")
+        commit_layout.addWidget(latest_label)
 
-        layout.addLayout(version_layout)
+        layout.addLayout(commit_layout)
 
-        # Release notes
-        notes_label = QLabel("Release Notes:")
-        notes_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-        layout.addWidget(notes_label)
+        # Update summary
+        summary = self.update_info.get_summary()
+        summary_label = QLabel(summary)
+        summary_label.setStyleSheet("color: #2563eb; font-weight: bold; margin-top: 8px;")
+        layout.addWidget(summary_label)
 
-        notes_text = QTextEdit()
-        notes_text.setReadOnly(True)
-        notes_text.setPlainText(self.update_info.release_notes)
-        notes_text.setMaximumHeight(200)
-        layout.addWidget(notes_text)
+        # Changed files preview
+        if self.update_info.changed_files:
+            files_label = QLabel("Changed Files:")
+            files_label.setStyleSheet("font-weight: bold; margin-top: 12px;")
+            layout.addWidget(files_label)
 
-        # Published date
-        if self.update_info.published_at:
-            date_label = QLabel(f"Published: {self.update_info.published_at}")
+            files_text = QTextEdit()
+            files_text.setReadOnly(True)
+            files_text.setPlainText('\n'.join(self.update_info.changed_files))
+            files_text.setMaximumHeight(120)
+            files_text.setStyleSheet("background-color: #f3f4f6; font-family: monospace;")
+            layout.addWidget(files_text)
+
+        # Commit messages
+        commits_label = QLabel("Recent Commits:")
+        commits_label.setStyleSheet("font-weight: bold; margin-top: 12px;")
+        layout.addWidget(commits_label)
+
+        commits_text = QTextEdit()
+        commits_text.setReadOnly(True)
+        commits_text.setPlainText(self.update_info.commit_messages)
+        commits_text.setMaximumHeight(150)
+        commits_text.setStyleSheet("font-family: monospace;")
+        layout.addWidget(commits_text)
+
+        # Last update date
+        if self.update_info.last_update_date:
+            date_label = QLabel(f"Last updated: {self.update_info.last_update_date}")
             date_label.setStyleSheet("color: #666; font-size: 11px;")
             layout.addWidget(date_label)
 
@@ -124,100 +138,41 @@ class UpdateDialog(QDialog):
         remind_btn.clicked.connect(self.reject)
         button_layout.addWidget(remind_btn)
 
-        # View release button (if URL available)
-        if self.update_info.release_url:
-            view_btn = QPushButton("View Release")
-            view_btn.clicked.connect(self._open_release_url)
-            button_layout.addWidget(view_btn)
-
-        # Update action button
-        if self.update_service.is_git_repo:
-            # Git repo: offer to update via git pull
-            update_btn = QPushButton("Update Now (Git Pull)")
-            update_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2563eb;
-                    color: white;
-                    font-weight: bold;
-                    padding: 8px 16px;
-                }
-                QPushButton:hover {
-                    background-color: #1d4ed8;
-                }
-            """)
-            update_btn.clicked.connect(self._apply_git_update)
-            button_layout.addWidget(update_btn)
-        elif self.update_info.download_url:
-            # Release download available
-            download_btn = QPushButton("Download Update")
-            download_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2563eb;
-                    color: white;
-                    font-weight: bold;
-                    padding: 8px 16px;
-                }
-                QPushButton:hover {
-                    background-color: #1d4ed8;
-                }
-            """)
-            download_btn.clicked.connect(self._download_update)
-            button_layout.addWidget(download_btn)
+        # Update button (git pull delta update)
+        update_btn = QPushButton(f"Update Now ({self.update_info.commits_behind} commits)")
+        update_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2563eb;
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #1d4ed8;
+            }
+        """)
+        update_btn.clicked.connect(self._apply_git_update)
+        button_layout.addWidget(update_btn)
 
         layout.addLayout(button_layout)
 
         self.setLayout(layout)
 
-    def _open_release_url(self):
-        """Open release URL in browser."""
-        try:
-            webbrowser.open(self.update_info.release_url)
-        except Exception as e:
-            logger.error(f"Error opening release URL: {e}")
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"Could not open browser: {str(e)}"
-            )
-
-    def _download_update(self):
-        """Open download URL in browser."""
-        try:
-            if self.update_info.download_url:
-                webbrowser.open(self.update_info.download_url)
-
-                QMessageBox.information(
-                    self,
-                    "Download Started",
-                    "The download should start in your browser.\n\n"
-                    "After downloading, please extract and replace the application files.\n"
-                    "Your data (.env, fridge.db, logs) will be preserved."
-                )
-                self.accept()
-            else:
-                QMessageBox.warning(
-                    self,
-                    "No Download Available",
-                    "No download URL is available for this release.\n"
-                    "Please visit the release page to download manually."
-                )
-        except Exception as e:
-            logger.error(f"Error opening download URL: {e}")
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"Could not open browser: {str(e)}"
-            )
 
     def _apply_git_update(self):
-        """Apply git update in background."""
+        """Apply git delta update in background."""
         # Confirm action
+        file_count = len(self.update_info.changed_files)
         reply = QMessageBox.question(
             self,
             "Confirm Update",
-            "This will run 'git pull' to update the application.\n\n"
-            "Make sure you have committed or stashed any local changes.\n\n"
-            "Continue?",
+            f"This will update the application using git pull (delta download).\n\n"
+            f"Changes:\n"
+            f"  • {self.update_info.commits_behind} commit(s) will be applied\n"
+            f"  • {file_count} file(s) will be updated\n\n"
+            f"Only changed file contents will be downloaded.\n"
+            f"Your data (.env, fridge.db, logs) will be preserved.\n\n"
+            f"Continue?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
@@ -235,7 +190,7 @@ class UpdateDialog(QDialog):
         self.worker.start()
 
         # Show progress
-        self.findChild(QLabel).setText("⏳ Applying update...")
+        self.title_label.setText("⏳ Applying update...")
 
     def _on_update_finished(self, success: bool, message: str):
         """Handle update completion.
@@ -262,7 +217,7 @@ class UpdateDialog(QDialog):
                 message
             )
             # Reset title
-            self.findChild(QLabel).setText("🎉 A new version is available!")
+            self.title_label.setText("🎉 A new version is available!")
 
 
 class UpdateNotificationWidget(QWidget):
@@ -304,8 +259,8 @@ class UpdateNotificationWidget(QWidget):
 
         # Message
         message = QLabel(
-            f"<b>Update available:</b> {self.update_info.latest_version} "
-            f"<span style='color: #666;'>(current: {self.update_info.current_version})</span>"
+            f"<b>Update available:</b> {self.update_info.commits_behind} commit(s), "
+            f"{len(self.update_info.changed_files)} file(s) changed"
         )
         message.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(message, 1)

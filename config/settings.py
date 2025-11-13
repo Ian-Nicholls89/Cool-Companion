@@ -79,7 +79,11 @@ class Settings:
     enable_barcode_scanning: bool = os.getenv('ENABLE_BARCODE_SCANNING', 'true').lower() == 'true'
     enable_shopping_list: bool = os.getenv('ENABLE_SHOPPING_LIST', 'true').lower() == 'true'
     enable_statistics: bool = os.getenv('ENABLE_STATISTICS', 'true').lower() == 'true'
-    
+
+    # Update Configuration
+    enable_update_check: bool = os.getenv('ENABLE_UPDATE_CHECK', 'true').lower() == 'true'
+    update_check_frequency_hours: int = int(os.getenv('UPDATE_CHECK_FREQUENCY_HOURS', '24'))
+
     # Validation Configuration
     max_item_name_length: int = int(os.getenv('MAX_ITEM_NAME_LENGTH', '100'))
     max_barcode_length: int = int(os.getenv('MAX_BARCODE_LENGTH', '50'))

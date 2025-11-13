@@ -85,6 +85,24 @@ cp .env.example .env
 python main.py
 ```
 
+### 🍓 Raspberry Pi Auto-Start
+
+On Raspberry Pi, the `run.sh` script can automatically install a systemd service that starts the application on boot:
+
+```bash
+./run.sh
+# Answer 'y' when prompted about auto-start
+```
+
+For manual service management, use the included script:
+```bash
+./service-manager.sh status      # Check service status
+./service-manager.sh restart     # Restart service
+./service-manager.sh logs        # View live logs
+```
+
+See [SERVICE.md](SERVICE.md) for complete service management documentation.
+
 ## ⚙️ Configuration
 
 Create a `.env` file in the backend directory with the following variables:

@@ -139,6 +139,10 @@ class FridgeInventoryApp:
             shopping_service=self.shopping_service
         )
 
+        # Initialize update service
+        from services.update_service import UpdateService
+        self.update_service = UpdateService(settings=settings)
+
         # Start camera keep-alive in background if barcode scanning is enabled
         if settings.enable_barcode_scanning and len(self.available_cameras) > 0:
             logger.info("Starting camera keep-alive mode...")
@@ -190,6 +194,9 @@ class FridgeInventoryApp:
             if self._is_first_run():
                 self.main_window.show_welcome_dialog()
 
+            # Check for updates on startup (async, non-blocking)
+            self._check_for_updates_async()
+
             # Start background tasks using QTimer
             from PySide6.QtCore import QTimer
             self.background_timer = QTimer()
@@ -214,6 +221,55 @@ class FridgeInventoryApp:
         items = self.item_repository.get_all()
         return len(items) == 0
 
+    def _check_for_updates_async(self):
+        """Check for updates asynchronously (non-blocking)."""
+        import asyncio
+        from PySide6.QtCore import QThread
+
+        class UpdateCheckWorker(QThread):
+            """Worker thread for checking updates."""
+            def __init__(self, update_service, main_window):
+                super().__init__()
+                self.update_service = update_service
+                self.main_window = main_window
+                self.update_info = None
+
+            def run(self):
+                """Check for updates in background."""
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        self.update_info = loop.run_until_complete(
+                            self.update_service.check_for_updates()
+                        )
+                    finally:
+                        loop.close()
+                except Exception as e:
+                    logger.debug(f"Error checking for updates: {e}")
+
+            def get_result(self):
+                """Get update check result."""
+                if self.update_info:
+                    self._show_update_notification()
+
+            def _show_update_notification(self):
+                """Show update notification in main window."""
+                try:
+                    from views.update_dialog import UpdateDialog
+                    dialog = UpdateDialog(self.update_info, self.update_service, self.main_window)
+                    dialog.exec()
+                except Exception as e:
+                    logger.error(f"Error showing update dialog: {e}")
+
+        # Start update check in background
+        try:
+            self.update_check_worker = UpdateCheckWorker(self.update_service, self.main_window)
+            self.update_check_worker.finished.connect(self.update_check_worker.get_result)
+            self.update_check_worker.start()
+        except Exception as e:
+            logger.debug(f"Could not start update check: {e}")
+
     def _background_tasks(self):
         """Run background tasks periodically."""
         try:
@@ -221,6 +277,9 @@ class FridgeInventoryApp:
             deleted = self.barcode_repository.cleanup_old_entries(days=365)
             if deleted > 0:
                 logger.info(f"Cleaned up {deleted} old barcode cache entries")
+
+            # Check for updates periodically
+            self._check_for_updates_async()
 
         except Exception as e:
             logger.error(f"Error in background task: {e}")

@@ -1,25 +1,18 @@
-"""Service for checking and managing application updates."""
+"""Service for checking and managing application updates via git delta downloads."""
 import asyncio
 import logging
-import os
 import json
 import subprocess
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, Tuple
 from pathlib import Path
-import requests
-
-if TYPE_CHECKING:
-    from config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 # Update service configuration constants
 UPDATE_CHECK_CACHE_FILE = ".update_cache.json"
 UPDATE_CHECK_FREQUENCY_HOURS = 24  # Default: check once per day
-GITHUB_API_RELEASES_URL = "https://api.github.com/repos/{owner}/{repo}/releases/latest"
-GITHUB_REPO_OWNER = "anthropics"  # TODO: Update with actual repo owner
-GITHUB_REPO_NAME = "cool-companion"  # TODO: Update with actual repo name
+LAST_UPDATE_FILE = ".last_update"
 
 
 class UpdateInfo:
@@ -27,56 +20,44 @@ class UpdateInfo:
 
     def __init__(
         self,
-        current_version: str,
-        latest_version: str,
-        release_url: str,
-        release_notes: str,
-        published_at: str,
-        download_url: Optional[str] = None
+        current_commit: str,
+        latest_commit: str,
+        commits_behind: int,
+        changed_files: List[str],
+        commit_messages: str,
+        last_update_date: Optional[str] = None
     ):
-        self.current_version = current_version
-        self.latest_version = latest_version
-        self.release_url = release_url
-        self.release_notes = release_notes
-        self.published_at = published_at
-        self.download_url = download_url
+        self.current_commit = current_commit
+        self.latest_commit = latest_commit
+        self.commits_behind = commits_behind
+        self.changed_files = changed_files
+        self.commit_messages = commit_messages
+        self.last_update_date = last_update_date
 
-    def is_newer(self) -> bool:
-        """Check if latest version is newer than current version."""
-        try:
-            # Simple version comparison (assumes semantic versioning: v1.2.3)
-            current = self._parse_version(self.current_version)
-            latest = self._parse_version(self.latest_version)
-            return latest > current
-        except Exception as e:
-            logger.error(f"Error comparing versions: {e}")
-            return False
+    def has_updates(self) -> bool:
+        """Check if there are updates available."""
+        return self.commits_behind > 0
 
-    @staticmethod
-    def _parse_version(version_str: str) -> Tuple[int, int, int]:
-        """Parse version string into tuple for comparison."""
-        # Remove 'v' prefix if present
-        version_str = version_str.lstrip('v')
-        parts = version_str.split('.')
+    def get_summary(self) -> str:
+        """Get human-readable summary of update."""
+        if not self.has_updates():
+            return "Application is up to date"
 
-        # Ensure we have at least 3 parts (major, minor, patch)
-        while len(parts) < 3:
-            parts.append('0')
-
-        try:
-            return (int(parts[0]), int(parts[1]), int(parts[2]))
-        except (ValueError, IndexError):
-            return (0, 0, 0)
+        file_count = len(self.changed_files)
+        return (
+            f"{self.commits_behind} new commit(s) available\n"
+            f"{file_count} file(s) will be updated"
+        )
 
 
 class UpdateService:
-    """Service for checking and managing application updates."""
+    """Service for checking and managing git-based delta updates."""
 
-    def __init__(self, settings: Optional['Settings'] = None):
+    def __init__(self, settings=None):
         """Initialize update service.
 
         Args:
-            settings: Application settings
+            settings: Application settings (optional)
         """
         if settings is None:
             from config.settings import settings as default_settings
@@ -86,42 +67,11 @@ class UpdateService:
 
         self.app_dir = Path(__file__).parent.parent
         self.cache_file = self.app_dir / UPDATE_CHECK_CACHE_FILE
+        self.last_update_file = self.app_dir / LAST_UPDATE_FILE
         self.is_git_repo = (self.app_dir / ".git").exists()
 
-    def get_current_version(self) -> str:
-        """Get current application version.
-
-        Returns:
-            Version string (e.g., "v1.0.0" or "dev")
-        """
-        # Try to get version from git tag if running from git repo
-        if self.is_git_repo:
-            try:
-                result = subprocess.run(
-                    ["git", "describe", "--tags", "--abbrev=0"],
-                    cwd=self.app_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    return result.stdout.strip()
-            except Exception as e:
-                logger.debug(f"Could not get version from git: {e}")
-
-        # Try to read from VERSION file
-        version_file = self.app_dir / "VERSION"
-        if version_file.exists():
-            try:
-                return version_file.read_text().strip()
-            except Exception as e:
-                logger.debug(f"Could not read VERSION file: {e}")
-
-        # Fallback to development version
-        return "dev"
-
     async def check_for_updates(self, force: bool = False) -> Optional[UpdateInfo]:
-        """Check if updates are available.
+        """Check if updates are available using git.
 
         Args:
             force: Force check even if cache is valid
@@ -134,122 +84,251 @@ class UpdateService:
             logger.debug("Update checking is disabled")
             return None
 
+        # Verify this is a git repository
+        if not self.is_git_repo:
+            logger.warning("Not a git repository - update checking unavailable")
+            return None
+
+        # Verify git is installed
+        if not await self._has_git_command():
+            logger.warning("Git command not available - update checking unavailable")
+            return None
+
         # Check cache unless forced
         if not force and self._is_cache_valid():
             logger.debug("Using cached update check result")
-            cached_info = self._load_cache()
-            if cached_info and not cached_info.get('update_available'):
+            cached_info = self._load_cached_update_info()
+            if cached_info and not cached_info.has_updates():
                 return None
 
         try:
-            # Get current version
-            current_version = self.get_current_version()
+            # Fetch latest changes from remote (only downloads deltas)
+            logger.info("Fetching updates from remote repository...")
+            fetch_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "fetch", "origin", "--quiet"],
+                cwd=self.app_dir,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
 
-            # Check git status if in git repo
-            if self.is_git_repo:
-                git_update = await self._check_git_updates()
-                if git_update:
-                    return git_update
+            if fetch_result.returncode != 0:
+                logger.warning(f"Git fetch failed: {fetch_result.stderr}")
+                return None
 
-            # Check GitHub releases
-            github_update = await self._check_github_releases(current_version)
+            # Get current commit SHA
+            current_commit = await self._get_current_commit()
+            if not current_commit:
+                logger.error("Could not determine current commit")
+                return None
+
+            # Get upstream commit SHA
+            latest_commit = await self._get_upstream_commit()
+            if not latest_commit:
+                logger.warning("Could not determine upstream commit (no remote configured?)")
+                return None
+
+            # Check if we're behind
+            commits_behind = await self._get_commits_behind()
+
+            if commits_behind == 0:
+                logger.info("Application is up to date")
+                update_info = UpdateInfo(
+                    current_commit=current_commit[:7],
+                    latest_commit=latest_commit[:7],
+                    commits_behind=0,
+                    changed_files=[],
+                    commit_messages="",
+                    last_update_date=self._get_last_update_date()
+                )
+                self._save_cache(update_info)
+                return None
+
+            # Get list of changed files
+            changed_files = await self._get_changed_files()
+
+            # Get commit messages
+            commit_messages = await self._get_commit_log()
+
+            logger.info(f"Update available: {commits_behind} commit(s) behind, {len(changed_files)} file(s) changed")
+
+            update_info = UpdateInfo(
+                current_commit=current_commit[:7],
+                latest_commit=latest_commit[:7],
+                commits_behind=commits_behind,
+                changed_files=changed_files,
+                commit_messages=commit_messages,
+                last_update_date=self._get_last_update_date()
+            )
 
             # Save cache
-            self._save_cache(github_update)
+            self._save_cache(update_info)
 
-            return github_update
+            return update_info
 
         except Exception as e:
             logger.error(f"Error checking for updates: {e}")
             return None
 
-    async def _check_github_releases(self, current_version: str) -> Optional[UpdateInfo]:
-        """Check GitHub releases for updates.
-
-        Args:
-            current_version: Current version string
+    async def apply_update(self) -> Tuple[bool, str]:
+        """Apply git delta update (only downloads changed files).
 
         Returns:
-            UpdateInfo if update available, None otherwise
+            Tuple of (success, message)
         """
+        if not self.is_git_repo:
+            return (False, "Not a git repository")
+
         try:
-            url = GITHUB_API_RELEASES_URL.format(
-                owner=GITHUB_REPO_OWNER,
-                repo=GITHUB_REPO_NAME
-            )
+            logger.info("Applying git delta update...")
 
-            # Make request in thread to avoid blocking
-            response = await asyncio.to_thread(
-                requests.get,
-                url,
-                timeout=self.settings.api_timeout,
-                headers={"Accept": "application/vnd.github.v3+json"}
-            )
-
-            if response.status_code != 200:
-                logger.warning(f"GitHub API returned status {response.status_code}")
-                return None
-
-            data = response.json()
-
-            # Extract release information
-            latest_version = data.get('tag_name', '')
-            release_url = data.get('html_url', '')
-            release_notes = data.get('body', 'No release notes available.')
-            published_at = data.get('published_at', '')
-
-            # Get download URL for appropriate asset
-            download_url = None
-            for asset in data.get('assets', []):
-                # Look for zip or tar.gz files
-                if asset['name'].endswith(('.zip', '.tar.gz')):
-                    download_url = asset['browser_download_url']
-                    break
-
-            # Create update info
-            update_info = UpdateInfo(
-                current_version=current_version,
-                latest_version=latest_version,
-                release_url=release_url,
-                release_notes=release_notes,
-                published_at=published_at,
-                download_url=download_url
-            )
-
-            # Check if update is available
-            if update_info.is_newer():
-                logger.info(f"Update available: {latest_version} (current: {current_version})")
-                return update_info
-            else:
-                logger.debug(f"No update available (current: {current_version}, latest: {latest_version})")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error checking GitHub releases: {e}")
-            return None
-
-    async def _check_git_updates(self) -> Optional[UpdateInfo]:
-        """Check for updates via git (if running from git repo).
-
-        Returns:
-            UpdateInfo if update available, None otherwise
-        """
-        try:
-            # Fetch latest changes
-            result = await asyncio.to_thread(
+            # Check for uncommitted changes
+            status_result = await asyncio.to_thread(
                 subprocess.run,
-                ["git", "fetch", "origin"],
+                ["git", "status", "--porcelain"],
                 cwd=self.app_dir,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=5
             )
 
-            if result.returncode != 0:
-                logger.warning(f"Git fetch failed: {result.stderr}")
-                return None
+            if status_result.stdout.strip():
+                # There are uncommitted changes
+                logger.warning("Uncommitted changes detected")
+                return (
+                    False,
+                    "You have uncommitted local changes.\n"
+                    "Please commit or stash them before updating."
+                )
 
-            # Check if local is behind remote
+            # Get info before update
+            files_to_update = await self._get_changed_files()
+            commits_to_apply = await self._get_commits_behind()
+
+            # Pull changes (git will only download file deltas)
+            logger.info("Pulling changes from remote...")
+            pull_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "pull", "origin", "--rebase", "--quiet"],
+                cwd=self.app_dir,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if pull_result.returncode != 0:
+                error_msg = pull_result.stderr.strip()
+                logger.error(f"Git pull failed: {error_msg}")
+                return (False, f"Update failed: {error_msg}")
+
+            # Record successful update
+            self._save_last_update_info(commits_to_apply, len(files_to_update))
+
+            logger.info(f"Update successful: {commits_to_apply} commit(s), {len(files_to_update)} file(s)")
+
+            return (
+                True,
+                f"Update successful!\n\n"
+                f"Applied {commits_to_apply} commit(s)\n"
+                f"Updated {len(files_to_update)} file(s)\n\n"
+                f"Please restart the application for changes to take effect."
+            )
+
+        except Exception as e:
+            logger.error(f"Error applying update: {e}")
+            return (False, f"Update error: {str(e)}")
+
+    async def get_update_statistics(self) -> Dict[str, Any]:
+        """Get statistics about updates.
+
+        Returns:
+            Dictionary with update statistics
+        """
+        stats = {
+            'is_git_repo': self.is_git_repo,
+            'git_available': await self._has_git_command(),
+            'last_update_date': self._get_last_update_date(),
+            'last_check_date': self._get_last_check_date(),
+            'current_commit': None,
+            'current_branch': None
+        }
+
+        if self.is_git_repo:
+            stats['current_commit'] = await self._get_current_commit()
+            stats['current_branch'] = await self._get_current_branch()
+
+        return stats
+
+    # Private helper methods
+
+    async def _has_git_command(self) -> bool:
+        """Check if git command is available."""
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "--version"],
+                capture_output=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    async def _get_current_commit(self) -> Optional[str]:
+        """Get current commit SHA."""
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.app_dir,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception as e:
+            logger.debug(f"Error getting current commit: {e}")
+        return None
+
+    async def _get_upstream_commit(self) -> Optional[str]:
+        """Get upstream commit SHA."""
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "@{u}"],
+                cwd=self.app_dir,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception as e:
+            logger.debug(f"Error getting upstream commit: {e}")
+        return None
+
+    async def _get_current_branch(self) -> Optional[str]:
+        """Get current branch name."""
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=self.app_dir,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception as e:
+            logger.debug(f"Error getting current branch: {e}")
+        return None
+
+    async def _get_commits_behind(self) -> int:
+        """Get number of commits behind upstream."""
+        try:
             result = await asyncio.to_thread(
                 subprocess.run,
                 ["git", "rev-list", "--count", "HEAD..@{u}"],
@@ -258,89 +337,46 @@ class UpdateService:
                 text=True,
                 timeout=5
             )
-
-            if result.returncode != 0:
-                logger.debug("Could not check git status (no upstream configured?)")
-                return None
-
-            commits_behind = int(result.stdout.strip())
-
-            if commits_behind > 0:
-                # Get current commit
-                current_commit = subprocess.run(
-                    ["git", "rev-parse", "--short", "HEAD"],
-                    cwd=self.app_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                ).stdout.strip()
-
-                # Get latest commit
-                latest_commit = subprocess.run(
-                    ["git", "rev-parse", "--short", "@{u}"],
-                    cwd=self.app_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                ).stdout.strip()
-
-                # Get commit messages
-                commit_log = subprocess.run(
-                    ["git", "log", "--oneline", f"HEAD..@{{u}}"],
-                    cwd=self.app_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                ).stdout.strip()
-
-                logger.info(f"Git update available: {commits_behind} commit(s) behind")
-
-                return UpdateInfo(
-                    current_version=current_commit,
-                    latest_version=latest_commit,
-                    release_url="",  # Not applicable for git
-                    release_notes=f"Commits:\n{commit_log}",
-                    published_at="",
-                    download_url=None
-                )
-
-            return None
-
+            if result.returncode == 0:
+                return int(result.stdout.strip())
         except Exception as e:
-            logger.debug(f"Could not check git updates: {e}")
-            return None
+            logger.debug(f"Error getting commits behind: {e}")
+        return 0
 
-    async def apply_git_update(self) -> bool:
-        """Apply update via git pull.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.is_git_repo:
-            logger.error("Cannot apply git update: not a git repository")
-            return False
-
+    async def _get_changed_files(self) -> List[str]:
+        """Get list of files that will change in update."""
         try:
-            # Pull latest changes
             result = await asyncio.to_thread(
                 subprocess.run,
-                ["git", "pull", "origin"],
+                ["git", "diff", "--name-status", "HEAD..@{u}"],
                 cwd=self.app_dir,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=5
             )
-
             if result.returncode == 0:
-                logger.info("Git update applied successfully")
-                return True
-            else:
-                logger.error(f"Git pull failed: {result.stderr}")
-                return False
-
+                lines = result.stdout.strip().split('\n')
+                return [line for line in lines if line]
         except Exception as e:
-            logger.error(f"Error applying git update: {e}")
-            return False
+            logger.debug(f"Error getting changed files: {e}")
+        return []
+
+    async def _get_commit_log(self) -> str:
+        """Get commit messages for pending updates."""
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "log", "--oneline", "--decorate", "HEAD..@{u}"],
+                cwd=self.app_dir,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip() or "No commit messages available"
+        except Exception as e:
+            logger.debug(f"Error getting commit log: {e}")
+        return "No commit messages available"
 
     def _is_update_check_enabled(self) -> bool:
         """Check if update checking is enabled in settings."""
@@ -391,6 +427,28 @@ class UpdateService:
             logger.debug(f"Error loading cache: {e}")
         return None
 
+    def _load_cached_update_info(self) -> Optional[UpdateInfo]:
+        """Load UpdateInfo from cache.
+
+        Returns:
+            UpdateInfo object or None
+        """
+        try:
+            cache_data = self._load_cache()
+            if cache_data and 'update_info' in cache_data:
+                info = cache_data['update_info']
+                return UpdateInfo(
+                    current_commit=info['current_commit'],
+                    latest_commit=info['latest_commit'],
+                    commits_behind=info['commits_behind'],
+                    changed_files=info['changed_files'],
+                    commit_messages=info['commit_messages'],
+                    last_update_date=info.get('last_update_date')
+                )
+        except Exception as e:
+            logger.debug(f"Error loading cached update info: {e}")
+        return None
+
     def _save_cache(self, update_info: Optional[UpdateInfo]) -> None:
         """Save update check cache.
 
@@ -400,15 +458,61 @@ class UpdateService:
         try:
             cache_data = {
                 'timestamp': datetime.now().isoformat(),
-                'update_available': update_info is not None,
+                'update_available': update_info.has_updates() if update_info else False,
             }
 
             if update_info:
-                cache_data['latest_version'] = update_info.latest_version
-                cache_data['release_url'] = update_info.release_url
+                cache_data['update_info'] = {
+                    'current_commit': update_info.current_commit,
+                    'latest_commit': update_info.latest_commit,
+                    'commits_behind': update_info.commits_behind,
+                    'changed_files': update_info.changed_files,
+                    'commit_messages': update_info.commit_messages,
+                    'last_update_date': update_info.last_update_date
+                }
 
             with open(self.cache_file, 'w') as f:
                 json.dump(cache_data, f, indent=2)
 
         except Exception as e:
             logger.debug(f"Error saving cache: {e}")
+
+    def _get_last_check_date(self) -> Optional[str]:
+        """Get date of last update check."""
+        try:
+            cache_data = self._load_cache()
+            if cache_data and 'timestamp' in cache_data:
+                return cache_data['timestamp']
+        except Exception:
+            pass
+        return None
+
+    def _get_last_update_date(self) -> Optional[str]:
+        """Get date of last successful update."""
+        try:
+            if self.last_update_file.exists():
+                data = json.loads(self.last_update_file.read_text())
+                return data.get('timestamp')
+        except Exception:
+            pass
+        return None
+
+    def _save_last_update_info(self, commits_applied: int, files_updated: int) -> None:
+        """Save information about last successful update.
+
+        Args:
+            commits_applied: Number of commits applied
+            files_updated: Number of files updated
+        """
+        try:
+            data = {
+                'timestamp': datetime.now().isoformat(),
+                'commits_applied': commits_applied,
+                'files_updated': files_updated
+            }
+
+            with open(self.last_update_file, 'w') as f:
+                json.dump(data, f, indent=2)
+
+        except Exception as e:
+            logger.debug(f"Error saving last update info: {e}")

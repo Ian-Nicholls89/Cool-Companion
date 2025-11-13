@@ -1,11 +1,31 @@
-# Environment Variables
+# ============================================
+# Environment & Configuration
+# ============================================
+# Environment variables (contains sensitive credentials)
 .env
+.env.local
+.env.*.local
 
+# Backup configuration files
+.env.backup
+.env.bak
+*.env.bak
+
+# ============================================
 # Python
+# ============================================
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
+*.pyd
+
+# C extensions
 *.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -26,17 +46,26 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Virtual Environment
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# ============================================
+# Virtual Environments
+# ============================================
 venv/
 ENV/
 env/
 .venv
+.virtualenv
+venv.bak
+virtualenv/
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Unit test / coverage reports
+# ============================================
+# Testing & Coverage
+# ============================================
 htmlcov/
 .tox/
 .nox/
@@ -49,31 +78,234 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
-# Database
+# ============================================
+# Database Files
+# ============================================
+# SQLite databases (user data)
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
+# Database backups
+*.db.backup
+*.db.bak
+fridge.db.backup*
 
+# ============================================
+# Application Data & Cache
+# ============================================
+# Update system cache
+.update_cache.json
+.last_update
+
+# Dependency installation marker
+.dependencies_installed
+
+# Application cache
+cache/
+*.cache
+
+# Temporary barcode images
+temp_barcode_*.png
+temp_barcode_*.jpg
+
+# ============================================
 # Logs
+# ============================================
 *.log
+*.log.*
 logs/
 !logs/.gitkeep
+log/
+*.log.gz
+*.log.zip
 
+# ============================================
+# IDEs & Editors
+# ============================================
+# VSCode
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# PyCharm / IntelliJ
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# Vim
+*.swp
+*.swo
+*.swn
+*~
+.vim/
+
+# Emacs
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Atom
+.atom/
+
+# Qt Designer backups
+*.ui.bak
+*.qrc.bak
+
+# ============================================
 # OS Files
-Thumbs.db
+# ============================================
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
 
-# Jupyter Notebook
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+.nfs*
+
+# ============================================
+# Raspberry Pi Specific
+# ============================================
+# Raspberry Pi system files
+.Xauthority
+.bash_history
+.local/
+
+# ============================================
+# Security & Credentials
+# ============================================
+# SSH keys
+*.pem
+*.key
+*.cert
+id_rsa
+id_rsa.pub
+
+# API keys and secrets
+secrets.json
+credentials.json
+token.json
+*.secret
+
+# ============================================
+# Backup Files
+# ============================================
+*.bak
+*.backup
+*.old
+*.orig
+*.tmp
+*~.nib
+*.swp
+*.swo
+
+# ============================================
+# Media & Assets (Optional)
+# ============================================
+# Uncomment if you don't want to track large assets
+# *.mp4
+# *.mov
+# *.avi
+# *.mkv
+
+# ============================================
+# Documentation Build
+# ============================================
+docs/_build/
+docs/_static/
+docs/_templates/
+site/
+
+# Sphinx documentation
+docs/.build/
+
+# ============================================
+# Jupyter Notebooks
+# ============================================
 .ipynb_checkpoints
+*/.ipynb_checkpoints/*
 
-# Claude
+# ============================================
+# AI/ML Models (Optional)
+# ============================================
+# Uncomment if you have trained models
+# *.h5
+# *.pkl
+# *.model
+# *.weights
+
+# ============================================
+# Development Tools
+# ============================================
+# Claude Code
 .claude/
+
+# Profiling data
+*.prof
+*.lprof
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# ============================================
+# Custom Application Files
+# ============================================
+# Add any custom files specific to Cool Companion here
+# Example: temporary scan results
+scan_results_*.json
+temp_scan_*
